@@ -1,0 +1,135 @@
+{
+  "scenarios": {
+    "today": {
+      "label": "Today",
+      "delta_c": 0.0,
+      "hours": {
+        "8": {
+          "air_temp_c": 23.4,
+          "rh_pct": 82.0,
+          "heat_index_c": 23.94,
+          "heat_severity": 0.0
+        },
+        "12": {
+          "air_temp_c": 30.9,
+          "rh_pct": 47.5,
+          "heat_index_c": 31.99,
+          "heat_severity": 0.4156
+        },
+        "15": {
+          "air_temp_c": 33.05,
+          "rh_pct": 39.0,
+          "heat_index_c": 33.65,
+          "heat_severity": 0.5541
+        },
+        "18": {
+          "air_temp_c": 32.4,
+          "rh_pct": 41.5,
+          "heat_index_c": 33.16,
+          "heat_severity": 0.5132
+        }
+      },
+      "is_extrapolated": false,
+      "ensemble": null
+    },
+    "heat2035": {
+      "label": "2035 Heatwave",
+      "delta_c": 1.295,
+      "hours": {
+        "8": {
+          "air_temp_c": 24.7,
+          "rh_pct": 82.0,
+          "heat_index_c": 25.36,
+          "heat_severity": 0.0
+        },
+        "12": {
+          "air_temp_c": 32.2,
+          "rh_pct": 47.5,
+          "heat_index_c": 34.12,
+          "heat_severity": 0.5936
+        },
+        "15": {
+          "air_temp_c": 34.34,
+          "rh_pct": 39.0,
+          "heat_index_c": 35.76,
+          "heat_severity": 0.7303
+        },
+        "18": {
+          "air_temp_c": 33.7,
+          "rh_pct": 41.5,
+          "heat_index_c": 35.28,
+          "heat_severity": 0.6904
+        }
+      },
+      "is_extrapolated": false,
+      "ensemble": {
+        "delta_c": 1.2950000000000017,
+        "model_spread_c": [
+          1.0,
+          2.9950000000000045
+        ],
+        "n_models": 7
+      }
+    },
+    "heat2050": {
+      "label": "2050 Heatwave",
+      "delta_c": 2.187,
+      "hours": {
+        "8": {
+          "air_temp_c": 25.59,
+          "rh_pct": 82.0,
+          "heat_index_c": 26.34,
+          "heat_severity": 0.0
+        },
+        "12": {
+          "air_temp_c": 33.09,
+          "rh_pct": 47.5,
+          "heat_index_c": 35.76,
+          "heat_severity": 0.73
+        },
+        "15": {
+          "air_temp_c": 35.24,
+          "rh_pct": 39.0,
+          "heat_index_c": 37.35,
+          "heat_severity": 0.8628
+        },
+        "18": {
+          "air_temp_c": 34.59,
+          "rh_pct": 41.5,
+          "heat_index_c": 36.89,
+          "heat_severity": 0.8244
+        }
+      },
+      "is_extrapolated": true,
+      "ensemble": {
+        "delta_c": 2.186847704847679,
+        "model_spread_c": [
+          1.3662492492492149,
+          4.402319327730979
+        ],
+        "n_models": 7
+      }
+    }
+  },
+  "method": {
+    "baseline": "Observed hourly temperature and relative humidity, 2005-2024, median diurnal profile of the hottest 5% of summer days",
+    "baseline_source": "Open-Meteo Historical Weather API (ERA5 reanalysis)",
+    "projection_source": "CMIP6 downscaled ensemble via Open-Meteo Climate API, 7 models, summer hot-day 95th percentile delta vs 1995-2014",
+    "models": [
+      "CMCC_CM2_VHR4",
+      "FGOALS_f3_H",
+      "HiRAM_SIT_HR",
+      "MRI_AGCM3_2_S",
+      "EC_Earth3P_HR",
+      "MPI_ESM1_2_XR",
+      "NICAM16_8S"
+    ],
+    "heat_index": "NWS Rothfusz regression with official adjustments",
+    "severity_scale": "0 at the NWS Caution onset (27.0 C), 1.0 at the Danger onset (39.0 C)",
+    "humidity_assumption": "relative humidity held at observed values while temperature is shifted",
+    "extrapolation_note": "The 2050-2074 window the brief names lies beyond this source's 2050 cutoff. The 2050 scenario is a linear trend in hot-day temperature evaluated at 2062.",
+    "disclaimer": "Stress-test values for comparing interventions, not forecasts for a calendar year, and not a medical prediction for any person."
+  },
+  "threshold_c": 32.6,
+  "n_hot_days": 92
+}

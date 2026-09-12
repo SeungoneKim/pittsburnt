@@ -1,5 +1,4 @@
 PY := .venv/bin/python
-export PYTHONPATH := pipeline
 
 .PHONY: help step1 verify inspect clean-cache
 help:
@@ -24,3 +23,8 @@ check-determinism:
 	@$(PY) -c "import numpy,hashlib;print('before:',hashlib.sha256(numpy.load('data/cache/minutes.npz',allow_pickle=True)['minutes'].tobytes()).hexdigest()[:16])"
 	@$(PY) pipeline/step05_trips.py > /dev/null
 	@$(PY) -c "import numpy,hashlib;print(' after:',hashlib.sha256(numpy.load('data/cache/minutes.npz',allow_pickle=True)['minutes'].tobytes()).hexdigest()[:16])"
+step6:      ; $(PY) pipeline/step06_scenarios.py
+export PYTHONPATH := pipeline:api
+
+api:        ; $(PY) -m uvicorn main:app --app-dir api --reload --port 8000
+test-engine:; @$(PY) api/test_engine.py
