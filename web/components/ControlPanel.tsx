@@ -1,5 +1,8 @@
 "use client";
 
+import { useEffect, useState } from "react";
+
+import { formatBudget, parseBudget } from "@/lib/budget";
 import type { Hour, Meta, Selection, SourceMode } from "@/lib/types";
 
 const HOUR_LABEL: Record<number, string> = { 8: "8 AM", 12: "12 PM", 15: "3 PM", 18: "6 PM" };
@@ -59,6 +62,84 @@ function Choice<T extends string | number>({
         </button>
       ))}
     </div>
+  );
+}
+
+/**
+ * Any valid budget, not just the presets. "$250K", "250,000" and "0.25M" all
+ * normalise to the same number.
+ *
+ * In cached-fallback mode only the precomputed budgets can be answered, and
+ * the spec forbids serving one budget's cached plan for another - so an
+ * off-preset value is refused with a reason rather than quietly rounded.
+ */
+function BudgetField({ value, presets, cachedOnly, onCommit }: {
+  value: number;
+  presets: number[];
+  cachedOnly: boolean;
+  onCommit: (usd: number) => void;
+}) {
+  const [text, setText] = useState(formatBudget(value));
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => { setText(formatBudget(value)); setError(null); }, [value]);
+
+  const commit = () => {
+    const { usd, error: err } = parseBudget(text);
+    if (usd === null) { setError(err); return; }
+    if (cachedOnly && !presets.includes(usd)) {
+      setError("Cached mode answers the preset budgets only");
+      return;
+    }
+    setError(null);
+    // Show the normalised form back, so "0.25M" visibly becomes "$250K".
+    setText(formatBudget(usd));
+    onCommit(usd);
+  };
+
+  return (
+    <>
+      <div className="flex gap-1.5">
+        <input
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => { if (e.key === "Enter") commit(); }}
+          aria-label="Adapt budget in US dollars"
+          className={`w-28 rounded-md border px-2 py-1.5 text-xs tabular-nums
+            outline-none focus:ring-1 ${error
+              ? "border-red-400 focus:ring-red-300"
+              : "border-slate-300 focus:ring-slate-400"}`}
+        />
+        <button
+          onClick={commit}
+          className="rounded-md border border-slate-300 px-2.5 py-1.5 text-xs
+            text-slate-700 transition hover:bg-slate-50"
+        >
+          Set
+        </button>
+      </div>
+      {error && <p className="mt-1 text-[11px] text-red-600">{error}</p>}
+      <div className="mt-1.5 flex flex-wrap gap-1">
+        {presets.map((b) => (
+          <button
+            key={b}
+            onClick={() => onCommit(b)}
+            className={`rounded px-1.5 py-0.5 text-[11px] transition ${
+              b === value
+                ? "bg-slate-900 text-white"
+                : "text-slate-500 hover:bg-slate-100"
+            }`}
+          >
+            {formatBudget(b)}
+          </button>
+        ))}
+      </div>
+      <p className="mt-1 text-[11px] text-slate-500">
+        Any amount — &ldquo;$250K&rdquo;, &ldquo;250,000&rdquo; and
+        &ldquo;0.25M&rdquo; all mean the same thing.
+      </p>
+    </>
   );
 }
 
@@ -184,13 +265,11 @@ export default function ControlPanel({
       </Row>
 
       <Row n={6} title="Adapt budget">
-        <Choice
+        <BudgetField
           value={sel.budget}
-          options={meta.budgets.map((b) => ({
-            key: b,
-            label: b >= 1e6 ? `$${b / 1e6}M` : `$${b / 1000}K`,
-          }))}
-          onSelect={(budget) => onChange({ budget })}
+          presets={meta.budgets}
+          cachedOnly={mode === "fallback"}
+          onCommit={(budget) => onChange({ budget })}
         />
         <div className="mt-2.5">
           <div className="mb-1.5 text-[10px] uppercase tracking-wider text-slate-500">

@@ -107,6 +107,27 @@ def verify_buildings() -> None:
     tallest = b.loc[b.height_m.idxmax()]
     check("tallest building is a real landmark", tallest.height_m > 100,
           f"{tallest.bldg_name} at {tallest.height_m:.0f} m ({tallest.height_source})")
+    # Every height must say where it came from and how much to trust it.
+    prov = ["height_source_label", "conversion_rule", "confidence", "verified_at"]
+    check("every height carries full provenance",
+          all(c in b.columns for c in prov)
+          and not b[prov].isna().any(axis=1).any(),
+          " / ".join(prov))
+    check("confidence uses the specified classes",
+          set(b.confidence.unique()) <= {"high", "medium", "low"},
+          " / ".join(f"{k}:{v}" for k, v in
+                     b.confidence.value_counts().items()))
+    # A modelled estimate must never be labelled as measured data.
+    check("modelled estimates stay low confidence",
+          bool((b.loc[b.height_source == "modeled_default", "confidence"]
+                == "low").all())
+          and not b.loc[b.confidence == "low", "height_is_measured"].any(),
+          f"{int((b.confidence == 'low').sum())} low-confidence records")
+    check("floor-count conversions record their assumption",
+          bool(b.loc[b.conversion_rule == "levels_x_assumed_floor_height",
+                     "assumed_floor_height_m"].notna().all()),
+          f"{b.loc[b.conversion_rule == 'levels_x_assumed_floor_height', 'assumed_floor_height_m'].median():.1f} m per storey")
+
     check("shadow-casting area mostly measured", 
           b[meas].area_m2.sum()/b.area_m2.sum() >= 0.5,
           f"{b[meas].area_m2.sum()/b.area_m2.sum()*100:.1f}% of footprint area",

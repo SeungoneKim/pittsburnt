@@ -17,12 +17,16 @@ building records which rung it landed on:
                  per-type median would hand a 10,000 m2 museum the same 6.4 m
                  as a row house. This is still a guess, and labelled as one.
 
-height_source travels all the way to the UI, so the demo can state how much
-of what it is showing is measured and how much is inferred.
+Every building carries a full provenance record - source type, human-readable
+label, reference URL, the raw value it came from, the conversion rule applied,
+and a confidence class. The revision spec is explicit that migration adds
+disclosure and must not pretend a modelled estimate became measured data, so
+nothing is upgraded here; the existing numbers are kept and labelled.
 """
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 
 import geopandas as gpd
 import numpy as np
@@ -44,6 +48,58 @@ RES_ASSESS = "65855e14-549e-4992-b5be-d629afc676fa"
 # Metres per storey. A flat average: Oakland mixes ~3m residential floors with
 # ~4m+ institutional ones, and we have no per-building floor height anywhere.
 STOREY_M = 3.2
+
+# Provenance for each rung of the ladder. Confidence follows the revision
+# spec's mapping: a direct measured height is high, a floor-count conversion
+# is medium, a modelled estimate is low - and stays low.
+SOURCE_META = {
+    "manual": {
+        "label": "Hand-patched height",
+        "url": None,
+        "conversion_rule": "direct",
+        "confidence": "medium",
+        "notes": "Entered by hand for a hero-corridor building.",
+    },
+    "osm_part": {
+        "label": "OpenStreetMap 3D building:part height",
+        "url": "https://wiki.openstreetmap.org/wiki/Key:height",
+        "conversion_rule": "direct",
+        "confidence": "high",
+        "notes": "Tallest mapped part of the building; direct height in metres.",
+    },
+    "osm_height": {
+        "label": "OpenStreetMap height tag",
+        "url": "https://wiki.openstreetmap.org/wiki/Key:height",
+        "conversion_rule": "direct",
+        "confidence": "high",
+        "notes": "Direct height in metres, unit-validated.",
+    },
+    "osm_levels": {
+        "label": "OpenStreetMap building:levels",
+        "url": "https://wiki.openstreetmap.org/wiki/Key:building:levels",
+        "conversion_rule": "levels_x_assumed_floor_height",
+        "confidence": "medium",
+        "notes": ("Floor count converted with an assumed storey height. "
+                  "Levels exclude underground and roof levels."),
+    },
+    "county_stories": {
+        "label": "Allegheny County property assessment STORIES",
+        "url": "https://data.wprdc.org/dataset/property-assessments",
+        "conversion_rule": "levels_x_assumed_floor_height",
+        "confidence": "medium",
+        "notes": ("Dwelling characteristic, so it is weak for institutional "
+                  "and commercial buildings; values top out at 4 storeys."),
+    },
+    "modeled_default": {
+        "label": "Modelled estimate by building type and footprint size",
+        "url": None,
+        "conversion_rule": "legacy_manual",
+        "confidence": "low",
+        "notes": ("No height source exists for this building. Estimated from "
+                  "the median measured height of the same building type at a "
+                  "similar footprint size. Not measured data."),
+    },
+}
 ROOF_STOREY_M = 2.0   # roof levels are shallower than occupied floors
 MIN_HEIGHT_M = 2.5    # sheds and garages still cast some shadow
 
@@ -232,6 +288,29 @@ def resolve_heights(bld: gpd.GeoDataFrame, parcels: pd.DataFrame,
     bld["height_m"] = height.clip(lower=MIN_HEIGHT_M).round(2)
     bld["height_source"] = source
     bld["height_is_measured"] = source != "modeled_default"
+
+    # Record-level provenance. What the number came from, how it was
+    # converted, and how much to trust it - carried to the UI, not inferred
+    # there.
+    raw = pd.Series(np.nan, index=bld.index, dtype=object)
+    raw[source == "osm_part"] = h_part[source == "osm_part"].round(2)
+    raw[source == "osm_height"] = h_osm[source == "osm_height"].round(2)
+    lv = bld.apply(lambda r: _num(r.get("building:levels")), axis=1)
+    raw[source == "osm_levels"] = lv[source == "osm_levels"]
+    raw[source == "county_stories"] = (h_cty[source == "county_stories"]
+                                       / STOREY_M).round(1)
+    raw[source == "manual"] = h_man[source == "manual"]
+
+    meta = source.map(SOURCE_META)
+    bld["height_source_label"] = meta.map(lambda m: m["label"])
+    bld["height_source_url"] = meta.map(lambda m: m["url"])
+    bld["conversion_rule"] = meta.map(lambda m: m["conversion_rule"])
+    bld["confidence"] = meta.map(lambda m: m["confidence"])
+    bld["height_notes"] = meta.map(lambda m: m["notes"])
+    bld["raw_source_value"] = raw
+    bld["assumed_floor_height_m"] = np.where(
+        source.isin(["osm_levels", "county_stories"]), STOREY_M, np.nan)
+    bld["verified_at"] = datetime.now(timezone.utc).date().isoformat()
     return bld
 
 
@@ -261,7 +340,10 @@ def main() -> None:
     bld = resolve_heights(bld, parcels, parts)
 
     keep = ["bldg_id", "bldg_name", "building", "area_m2", "height_m",
-            "height_source", "height_is_measured", "geometry"]
+            "height_source", "height_source_label", "height_source_url",
+            "raw_source_value", "conversion_rule", "assumed_floor_height_m",
+            "confidence", "height_notes", "verified_at",
+            "height_is_measured", "geometry"]
     out = bld[[c for c in keep if c in bld.columns]].copy()
     out["building"] = out["building"].astype(str)
     out["bldg_name"] = out["bldg_name"].astype(object).where(out["bldg_name"].notna(), None)
@@ -276,6 +358,13 @@ def main() -> None:
     meas = out["height_is_measured"]
     print(f"  MEASURED: {meas.sum()}/{len(out)} buildings "
           f"({meas.mean()*100:.1f}%), {out[meas].area_m2.sum()/tot_a*100:.1f}% of footprint area")
+    print("  confidence:")
+    for conf, grp in out.groupby("confidence"):
+        print(f"    {conf:8} {len(grp):5} bldgs ({len(grp)/len(out)*100:5.1f}%)  "
+              f"{grp.area_m2.sum()/tot_a*100:5.1f}% of area")
+    missing = out[out[["height_source_label", "conversion_rule",
+                       "confidence"]].isna().any(axis=1)]
+    print(f"  records missing provenance: {len(missing)}")
 
     seg = gpd.read_file(CACHE / "segments.geojson").to_crs(CRS_METRIC)
     bm = out.to_crs(CRS_METRIC)
