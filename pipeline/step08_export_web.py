@@ -19,8 +19,8 @@ import numpy as np
 
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent / "api"))
 
-from config import (CACHE, CENTER, CORRIDORS, CRS_METRIC, CRS_WGS84, HOURS,  # noqa: E402
-                    PERSONAS, ROOT)
+from config import (BBOX, CACHE, CENTER, CORRIDORS, CRS_METRIC,  # noqa: E402
+                    CRS_WGS84, HOURS, PERSONAS, ROOT)
 from engine import Adapter, Engine  # noqa: E402
 
 OUT = ROOT / "web" / "public" / "data"
@@ -95,11 +95,15 @@ def main() -> None:
         from shapely.geometry import box as _box
 
         import canopy as canopy_mod
-        mask, geo = canopy_mod.build_mask()
+        # Display uses the padded context raster, so the layer does not end in
+        # a hard rectangle that makes leafy neighbouring areas look bare.
+        # The simulation still reads the narrow 1 m mask and is unaffected.
+        mask, geo = canopy_mod.build_context_mask()
+        sim_mask, _ = canopy_mod.build_mask()
         rgba = np.zeros((*mask.shape, 4), dtype=np.uint8)
-        rgba[mask] = (31, 122, 62, 205)
+        rgba[mask] = (31, 122, 62, 195)
         img = Image.fromarray(np.flipud(rgba))
-        img.thumbnail((2000, 2000))
+        img.thumbnail((2200, 2200))
         img.save(OUT / "canopy.png", optimize=True)
 
         minx, miny, px = geo
@@ -109,12 +113,14 @@ def main() -> None:
             .to_crs(CRS_WGS84).iloc[0].bounds
         canopy_meta = {
             "bounds": [[w, n_], [e_, n_], [e_, s_], [w, s_]],
-            "cover_pct": round(float(mask.mean()) * 100, 1),
+            "cover_pct": round(float(sim_mask.mean()) * 100, 1),
+            "context_cover_pct": round(float(mask.mean()) * 100, 1),
             "source": canopy_mod.CANOPY_SOURCE,
             "vintage": canopy_mod.CANOPY_VINTAGE,
         }
-        print(f"  canopy overlay: {mask.shape[1]}x{mask.shape[0]} px, "
-              f"{canopy_meta['cover_pct']}% cover")
+        print(f"  canopy overlay: {mask.shape[1]}x{mask.shape[0]} px @ "
+              f"{px:.0f} m (display), {canopy_meta['cover_pct']}% cover in the "
+              f"study area")
     except Exception as exc:
         canopy_meta = None
         print(f"  canopy overlay skipped: {exc}")
@@ -209,6 +215,11 @@ def main() -> None:
                       for k, v in e.scenarios["scenarios"].items()],
         "climate_method": e.scenarios["method"],
         "canopy": canopy_meta,
+        # The square the model actually runs in. Drawn on the map so a viewer
+        # can tell the difference between "no exposure here" and "not modelled
+        # here" - a distinction the canopy layer alone cannot make.
+        "scope": {"west": BBOX["west"], "south": BBOX["south"],
+                  "east": BBOX["east"], "north": BBOX["north"]},
         "canopy_source": str(sun["canopy_source"]),
         "canopy_vintage": str(sun["canopy_vintage"]),
         "trip_seed": e.trip_meta["seed"],

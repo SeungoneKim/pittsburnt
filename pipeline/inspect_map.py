@@ -72,10 +72,13 @@ let hourIdx = __DEFAULT_HOUR_IDX__;
 
 const map = new maplibregl.Map({
   container:'map',
-  style:{version:8,sources:{carto:{type:'raster',
-    tiles:['https://basemaps.cartocdn.com/rastertiles/light_all/{z}/{x}/{y}.png'],
-    tileSize:256,attribution:'&copy; OpenStreetMap &copy; CARTO'}},
-    layers:[{id:'bg',type:'raster',source:'carto'}]},
+  // CARTO's raster endpoint now requires an API key and stamps
+  // "API KEY REQUIRED" across every tile; OSM's needs none.
+  style:{version:8,sources:{osm:{type:'raster',
+    tiles:['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+    tileSize:256,maxzoom:19,attribution:'&copy; OpenStreetMap contributors'}},
+    layers:[{id:'bg',type:'raster',source:'osm',
+      paint:{'raster-opacity':0.5,'raster-saturation':-0.6}}]},
   center:__CENTER__, zoom:14.2
 });
 

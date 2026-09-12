@@ -179,6 +179,29 @@ export default function MapView({
           },
         });
 
+        // The modelled area, drawn as a thin outline. Without it a viewer
+        // cannot tell "no exposure here" from "we did not model here", and
+        // the canopy layer deliberately extends past it for context.
+        const { west, south, east, north } = meta.scope;
+        m.addSource("scope", {
+          type: "geojson",
+          data: {
+            type: "Feature", properties: {},
+            geometry: {
+              type: "LineString",
+              coordinates: [[west, south], [east, south], [east, north],
+                            [west, north], [west, south]],
+            },
+          } as GeoJSON.Feature,
+        });
+        m.addLayer({
+          id: "scope", type: "line", source: "scope",
+          paint: {
+            "line-color": "#64748b", "line-width": 1.2,
+            "line-dasharray": [4, 3], "line-opacity": 0.7,
+          },
+        });
+
         m.addSource("segments", { type: "geojson", data: segments });
         // Grey baseline so the street network is legible before any run.
         m.addLayer({

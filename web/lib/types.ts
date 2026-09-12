@@ -24,8 +24,17 @@ export interface Intervention {
 export interface CanopyMeta {
   bounds: [number, number][];
   cover_pct: number;
+  context_cover_pct: number;
   source: string;
   vintage: string;
+}
+
+/** The square the model actually runs in. */
+export interface Scope {
+  west: number;
+  south: number;
+  east: number;
+  north: number;
 }
 
 export interface Meta {
@@ -39,6 +48,7 @@ export interface Meta {
   interventions: Record<string, Intervention>;
   variants: string[];
   canopy: CanopyMeta | null;
+  scope: Scope;
   climate_method: Record<string, unknown>;
   canopy_source: string;
   canopy_vintage: string;

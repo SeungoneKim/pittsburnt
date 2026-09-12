@@ -95,6 +95,10 @@ export default function ControlPanel({
           Oakland, Pittsburgh · {meta.seg_ids.length.toLocaleString()} walking
           segments · Forbes / Fifth / Craig corridors
         </p>
+        <p className="mt-1 text-[11px] text-slate-500">
+          The dashed square on the map is the modelled area. Context layers
+          extend past it; nothing outside it is scored.
+        </p>
       </Row>
 
       <Row n={2} title="Time">
