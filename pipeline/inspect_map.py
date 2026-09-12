@@ -8,6 +8,9 @@ from __future__ import annotations
 import json
 
 import geopandas as gpd
+import numpy as np
+
+from shapely.geometry import box as shapely_box
 
 from config import CACHE, CENTER, CORRIDORS, CRS_METRIC, CRS_WGS84
 
@@ -39,9 +42,17 @@ TEMPLATE = """<!doctype html><html><head><meta charset="utf-8">
   <div class="sub">__SUB__</div>
   <div id="legend"></div>
   <hr>
+  <label><input type="checkbox" id="sunmode"> colour by sun exposure
+    <span style="color:#2b5fa8">shade</span>→<span style="color:#d7263d">full sun</span></label>
+  <div class="row" style="gap:6px">
+    <input type="range" id="hour" min="0" max="3" step="1" value="__DEFAULT_HOUR_IDX__" style="flex:1">
+  </div>
+  <div id="hlabel" style="color:#666;font-size:11px;margin-bottom:6px"></div>
+  <hr>
   <label><input type="checkbox" id="corronly"> hero corridors only</label>
   <label><input type="checkbox" id="showcl" checked> road centrelines (grey)</label>
   <label><input type="checkbox" id="showbld" checked> buildings (shaded by height)</label>
+  <label><input type="checkbox" id="showcan"> tree canopy (2010 raster)</label>
   <label><input type="checkbox" id="showmod" checked>
     <span style="border-bottom:2px dashed #e0431f">dash</span> = height is modelled, not measured</label>
   <div id="hint">Click any segment for its properties.</div>
@@ -52,6 +63,12 @@ const BUILDINGS = __BUILDINGS__;
 const CENTRELINES = __CENTRELINES__;
 const HERO = __HERO__;
 const COLORS = __COLORS__;
+const CANOPY = __CANOPY__;             // data: URI of the canopy mask
+const CANOPY_BOUNDS = __CANOPY_BOUNDS__;
+const SHADOWS = __SHADOWS__;   // {hour: geojson}
+const SUN = __SUN__;           // {seg_id: [e8,e12,e15,e18]}
+const HOURS = __HOURS__;
+let hourIdx = __DEFAULT_HOUR_IDX__;
 
 const map = new maplibregl.Map({
   container:'map',
@@ -63,6 +80,15 @@ const map = new maplibregl.Map({
 });
 
 map.on('load',()=>{
+  // Shadow union for the selected hour, drawn under the segments.
+  if(CANOPY){
+    map.addSource('canopy',{type:'image',url:CANOPY,coordinates:CANOPY_BOUNDS});
+    map.addLayer({id:'canopy',type:'raster',source:'canopy',
+      layout:{visibility:'none'},paint:{'raster-opacity':.5}});
+  }
+  map.addSource('shadow',{type:'geojson',data:SHADOWS[HOURS[hourIdx]]});
+  map.addLayer({id:'shadow',type:'fill',source:'shadow',
+    paint:{'fill-color':'#2c3e6b','fill-opacity':.22}});
   if(BUILDINGS){
     map.addSource('bld',{type:'geojson',data:BUILDINGS});
     // Height drives the fill ramp; measured vs modelled drives the outline,
@@ -116,12 +142,34 @@ map.on('load',()=>{
   map.on('mouseenter','seg',()=>map.getCanvas().style.cursor='pointer');
   map.on('mouseleave','seg',()=>map.getCanvas().style.cursor='');
 
+  // Colour segments by modelled sun exposure instead of by corridor.
+  const sunExpr = () => {
+    const stops=['match',['get','seg_id']];
+    for(const [sid,arr] of Object.entries(SUN)) stops.push(sid, arr[hourIdx]);
+    stops.push(0);
+    return ['interpolate',['linear'],stops, 0,'#2b5fa8', .35,'#7fb0d8',
+            .65,'#f2b705', 1,'#d7263d'];
+  };
+  function applyMode(){
+    const sunMode=document.getElementById('sunmode').checked;
+    map.setPaintProperty('seg','line-color', sunMode ? sunExpr() : colourExpr);
+    map.getSource('shadow').setData(SHADOWS[HOURS[hourIdx]]);
+    document.getElementById('hlabel').textContent=
+      HOURS[hourIdx]+':00  ·  mean sun exposure '+
+      (Object.values(SUN).reduce((a,v)=>a+v[hourIdx],0)/Object.keys(SUN).length).toFixed(3);
+  }
+  document.getElementById('sunmode').onchange=applyMode;
+  document.getElementById('hour').oninput=e=>{hourIdx=+e.target.value; applyMode();};
+  applyMode();
+
   document.getElementById('corronly').onchange=e=>{
     const f = e.target.checked ? ['in',['get','corridor'],['literal',HERO]] : null;
     map.setFilter('seg', f);
   };
   document.getElementById('showcl').onchange=e=>
     map.setLayoutProperty('cl','visibility',e.target.checked?'visible':'none');
+  document.getElementById('showcan').onchange=e=>
+    map.setLayoutProperty('canopy','visibility',e.target.checked?'visible':'none');
   document.getElementById('showbld').onchange=e=>
     map.setLayoutProperty('bld','visibility',e.target.checked?'visible':'none');
   document.getElementById('showmod').onchange=e=>
@@ -153,6 +201,44 @@ def main() -> None:
     bld_path = CACHE / "buildings.geojson"
     bld = gpd.read_file(bld_path) if bld_path.exists() else None
 
+    # Canopy mask as a lightweight green overlay image.
+    canopy_uri, canopy_bounds = "null", "null"
+    try:
+        import base64, io as _io
+        from PIL import Image
+        import canopy as canopy_mod
+        mask, geo = canopy_mod.build_mask()
+        rgba = np.zeros((*mask.shape, 4), dtype=np.uint8)
+        rgba[mask] = (34, 139, 34, 200)
+        img = Image.fromarray(np.flipud(rgba))
+        img.thumbnail((1400, 1400))
+        buf = _io.BytesIO(); img.save(buf, format="PNG")
+        canopy_uri = json.dumps("data:image/png;base64," +
+                                base64.b64encode(buf.getvalue()).decode())
+        minx, miny, px = geo
+        maxx, maxy = minx + mask.shape[1] * px, miny + mask.shape[0] * px
+        corners = gpd.GeoSeries(
+            [shapely_box(minx, miny, maxx, maxy)], crs=CRS_METRIC
+        ).to_crs(CRS_WGS84).iloc[0].bounds
+        w, s_, e, n = corners
+        canopy_bounds = json.dumps([[w, n], [e, n], [e, s_], [w, s_]])
+    except Exception as exc:
+        print(f"  (canopy overlay skipped: {exc})")
+
+    shadows, sun_map, hours = {}, {}, []
+    sun_path = CACHE / "sun_exposure.npz"
+    if sun_path.exists():
+        z = np.load(sun_path, allow_pickle=True)
+        hours = [int(h) for h in z["hours"]]
+        sun_map = {str(sid): [round(float(v), 3) for v in row]
+                   for sid, row in zip(z["seg_ids"], z["sun_exposure"])}
+        for h in hours:
+            sp = CACHE / f"shadow_{h:02d}.geojson"
+            if sp.exists():
+                g = gpd.read_file(sp).to_crs(CRS_METRIC)
+                g["geometry"] = g.geometry.simplify(1.0)
+                shadows[str(h)] = json.loads(g.to_crs(CRS_WGS84).to_json())
+
     legend = []
     for name, colour in CORRIDOR_COLORS.items():
         g = seg[seg["corridor"] == name]
@@ -181,6 +267,12 @@ def main() -> None:
                                                "klass": CLASS_COLORS}))
             .replace("__CENTER__", json.dumps([CENTER[1], CENTER[0]]))
             .replace("__LEGEND__", json.dumps(legend))
+            .replace("__CANOPY__", canopy_uri)
+            .replace("__CANOPY_BOUNDS__", canopy_bounds)
+            .replace("__SHADOWS__", json.dumps(shadows))
+            .replace("__SUN__", json.dumps(sun_map))
+            .replace("__HOURS__", json.dumps([str(h) for h in hours]))
+            .replace("__DEFAULT_HOUR_IDX__", str(hours.index(15) if 15 in hours else 0))
             .replace("__SUB__", sub))
     OUT.write_text(html)
     print(f"  wrote {OUT}  ({len(html)/1024:.0f} KB)")

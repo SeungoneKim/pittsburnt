@@ -14,3 +14,5 @@ inspect:    ; @$(PY) pipeline/inspect_map.py && open data/cache/inspect.html
 clean-cache:; rm -f data/cache/segments.geojson data/cache/edge_segments.json data/cache/inspect.html
 
 step2:      ; $(PY) pipeline/step02_buildings.py --candidates
+step3:      ; $(PY) pipeline/step03_shadows.py
+step4:      ; $(PY) pipeline/step04_trees.py

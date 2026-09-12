@@ -113,10 +113,86 @@ def verify_buildings() -> None:
           warn_only=True)
 
 
+def verify_shadows() -> None:
+    path = CACHE / "sun_exposure.npz"
+    if not path.exists():
+        check("sun_exposure.npz exists", False, "missing - run step03")
+        return
+    z = np.load(path, allow_pickle=True)
+    sun, ids, hours = z["sun_exposure"], list(z["seg_ids"]), list(z["hours"])
+    seg = gpd.read_file(CACHE / "segments.geojson")
+
+    check("sun_exposure.npz exists", True, f"{sun.shape[0]} segs x {sun.shape[1]} hours")
+    check("sun_exposure aligns with segments", ids == seg["seg_id"].tolist(),
+          "row order matches segments.geojson")
+    check("sun_exposure in [0,1]", bool((sun >= 0).all() and (sun <= 1).all()),
+          f"[{sun.min():.3f}, {sun.max():.3f}]")
+    check("no NaN in sun_exposure", not bool(np.isnan(sun).any()))
+
+    solar = json.loads((CACHE / "solar_positions.json").read_text())
+    pos = {p["hour"]: p for p in solar["positions"]}
+    # Morning sun is in the east, evening in the west. If these flip, every
+    # shadow in the model is on the wrong side of every building.
+    check("morning sun is easterly", 45 < pos[8]["azimuth_deg"] < 135,
+          f"8 AM azimuth {pos[8]['azimuth_deg']:.1f}deg")
+    check("evening sun is westerly", 225 < pos[18]["azimuth_deg"] < 315,
+          f"6 PM azimuth {pos[18]['azimuth_deg']:.1f}deg")
+    check("sun highest around midday",
+          pos[12]["elevation_deg"] > pos[8]["elevation_deg"]
+          and pos[12]["elevation_deg"] > pos[18]["elevation_deg"],
+          " / ".join(f"{h}h {pos[h]['elevation_deg']:.0f}deg" for h in (8, 12, 15, 18)))
+    # Low sun must shade more than high sun, or the geometry is inverted.
+    by_hour = {h: 1 - sun[:, i].mean() for i, h in enumerate(hours)}
+    check("low sun shades more than high sun",
+          by_hour[8] > by_hour[12] and by_hour[18] > by_hour[15],
+          " / ".join(f"{h}h {by_hour[h]*100:.0f}%" for h in (8, 12, 15, 18)))
+    check("shadow polygons written",
+          all((CACHE / f"shadow_{h:02d}.geojson").exists() for h in hours))
+
+    if "shade_tree" in z:
+        sb, st = z["shade_bldg"], z["shade_tree"]
+        block = float(z["canopy_block"])
+        check("shade components present", True,
+              f"canopy source: {str(z['canopy_source'])[:46]}")
+        # The two shade sources are computed to be disjoint; if they ever sum
+        # past 1 the same metre of pavement is being shaded twice.
+        check("building + canopy shade never exceed 1",
+              bool(((sb + st) <= 1.0001).all()),
+              f"max combined {float((sb + st).max()):.3f}")
+        check("sun_exposure matches its components",
+              bool(np.allclose(sun, np.clip(1 - sb - block * st, 0, 1), atol=1e-5)),
+              f"canopy blocks {block:.0%} of direct beam")
+        # Canopy sits over the footway, so at high sun it must out-shade the
+        # buildings - that is the whole argument for planting trees.
+        i15 = hours.index(15)
+        check("canopy out-shades buildings at 3 PM",
+              float(st[:, i15].mean()) > float(sb[:, i15].mean()),
+              f"canopy {st[:, i15].mean()*100:.1f}% vs buildings "
+              f"{sb[:, i15].mean()*100:.1f}%")
+
+
+def verify_trees() -> None:
+    path = CACHE / "trees.geojson"
+    if not path.exists():
+        check("trees.geojson exists", False, "missing - run step04")
+        return
+    t = gpd.read_file(path)
+    check("trees.geojson exists", True, f"{len(t)} standing trees")
+    check("tree_id unique", t.tree_id.is_unique)
+    check("no stumps or vacant sites kept",
+          not t.common_name.astype(str).str.lower()
+               .str.contains("stump|vacant", na=False).any())
+    check("crown dimensions positive",
+          bool((t.crown_r_m > 0).all() and (t.crown_h_m > 0).all()),
+          f"radius median {t.crown_r_m.median():.1f} m")
+
+
 def main() -> int:
     verify_segments()
     verify_edge_map()
     verify_buildings()
+    verify_shadows()
+    verify_trees()
 
     width = max(len(n) for _, n, _ in results)
     n_fail = 0

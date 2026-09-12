@@ -1,0 +1,28 @@
+{
+  "date": "2026-07-21",
+  "timezone": "America/New_York",
+  "lat": 40.4443,
+  "lon": -79.953,
+  "positions": [
+    {
+      "hour": 8,
+      "elevation_deg": 19.362,
+      "azimuth_deg": 79.238
+    },
+    {
+      "hour": 12,
+      "elevation_deg": 62.795,
+      "azimuth_deg": 131.093
+    },
+    {
+      "hour": 15,
+      "elevation_deg": 61.687,
+      "azimuth_deg": 231.795
+    },
+    {
+      "hour": 18,
+      "elevation_deg": 29.219,
+      "azimuth_deg": 272.671
+    }
+  ]
+}
