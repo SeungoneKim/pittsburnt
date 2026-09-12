@@ -125,6 +125,8 @@ def meta() -> dict:
             "thermal_index": "UTCI via thermofeel (ECMWF)",
         },
         "trip_seed": engine.trip_meta["seed"],
+        "dataset_version": engine.dataset_version,
+        "value_meta": engine.value_meta,
         "waiting_exposure": engine.wait_meta,
     }
 
@@ -164,6 +166,9 @@ def crash_test(req: CrashTestRequest) -> dict:
         "conditions": {**res.meta,
                        "utci_sun_c": res.utci_sun_c,
                        "utci_shade_c": res.utci_shade_c},
+        "snapshot_id": res.snapshot_id,
+        "input_hash": res.input_hash,
+        "status": res.status,
         "severe_person_minutes": round(res.severe_total, 2),
         "walking_severe_person_minutes": round(res.walking_severe_total, 2),
         "waiting_severe_person_minutes": round(res.waiting_severe_total, 2),
@@ -191,6 +196,9 @@ def adapt(req: AdaptRequest) -> dict:
                for i in np.nonzero(out["sun_delta"] > 1e-6)[0]]
     return {
         "request": req.model_dump(),
+        "snapshot_id": out["snapshot_id"],
+        "input_hash": out["input_hash"],
+        "status": out["status"],
         "budget_usd": out["budget_usd"], "spent_usd": out["spent_usd"],
         "counts": out["counts"],
         "metric_used": out["metric_used"],

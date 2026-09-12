@@ -171,6 +171,44 @@ def main() -> int:
           f"waiting {shelter_only['before'].waiting_severe_total:.0f} -> "
           f"{shelter_only['after'].waiting_severe_total:.0f}")
 
+    # --- snapshot contract -------------------------------------------------
+    from provenance import fnv1a, input_hash as ihash
+    check("fnv1a matches the reference vector", fnv1a("hello") == "4f9f2cab",
+          fnv1a("hello"))
+    check("snapshot carries an identity and a status",
+          bool(base.input_hash) and base.snapshot_id.startswith("crash-")
+          and base.status == "complete", base.snapshot_id)
+    check("hash is reproducible from the same inputs",
+          base.input_hash == e.input_hash(*HERO), base.input_hash)
+    # Each input that can change a result must change the hash, or a cache
+    # could answer a question it was not asked.
+    variants = {
+        "hour": e.input_hash("heat2035", 12, "older_adults"),
+        "scenario": e.input_hash("heat2050", 15, "older_adults"),
+        "persona": e.input_hash("heat2035", 15, "students"),
+        "budget": e.input_hash("heat2035", 15, "older_adults", 250000),
+    }
+    clashes = [k for k, v in variants.items() if v == base.input_hash]
+    check("every input changes the hash", not clashes,
+          clashes or " / ".join(variants))
+    b250 = a.optimize(*HERO, 250000)["input_hash"]
+    b137 = a.optimize(*HERO, 137500)["input_hash"]
+    check("different budgets produce different plan hashes", b250 != b137,
+          f"{b250} vs {b137}")
+    check("dataset version fingerprints the artifacts",
+          len(e.dataset_version) == 8, e.dataset_version)
+    check("every displayed quantity has a value status",
+          all(v["status"] in ("source", "computed", "assumption", "missing")
+              for v in e.value_meta.values()),
+          f"{len(e.value_meta)} fields")
+    # The honest split matters: if everything claimed to be "source" the
+    # badge would be meaningless.
+    from collections import Counter as _C
+    kinds = _C(v["status"] for v in e.value_meta.values())
+    check("provenance distinguishes sourced from assumed",
+          kinds["source"] > 0 and kinds["assumption"] > 0,
+          " / ".join(f"{k}:{v}" for k, v in kinds.items()))
+
     # --- determinism ------------------------------------------------------
     r1 = e.crash_test(*HERO).severe_total
     r2 = e.crash_test(*HERO).severe_total

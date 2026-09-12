@@ -1,6 +1,9 @@
 "use client";
 
 import { useState } from "react";
+
+import { STATUS_LABEL, STATUS_STYLE } from "@/lib/provenance";
+import type { ValueStatus } from "@/lib/provenance";
 import type { Meta } from "@/lib/types";
 
 /**
@@ -24,6 +27,33 @@ export default function AssumptionsPanel({ meta }: { meta: Meta }) {
 
       {open && (
         <div className="mt-2 max-h-[70vh] w-[360px] space-y-3 overflow-y-auto rounded-xl border border-slate-200 bg-white/97 p-4 text-[11px] leading-relaxed shadow-xl backdrop-blur">
+          {/* Every quantity on screen, by what kind of number it is. */}
+          <Section title="Where every number comes from">
+            <div className="space-y-1">
+              {(["source", "computed", "assumption"] as ValueStatus[]).map((st) => {
+                const rows = Object.entries(meta.value_meta ?? {})
+                  .filter(([, v]) => v.status === st);
+                if (!rows.length) return null;
+                return (
+                  <div key={st}>
+                    <span className={`rounded px-1 text-[9px] font-medium
+                      uppercase tracking-wide ${STATUS_STYLE[st]}`}>
+                      {STATUS_LABEL[st]}
+                    </span>{" "}
+                    <span className="text-slate-600">
+                      {rows.map(([k]) => k.replace(/_/g, " ")).join(", ")}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="mt-1 text-slate-500">
+              Dataset {meta.dataset_version}. Every result carries the hash of
+              the inputs that produced it; a cached answer is refused unless
+              that hash matches the request.
+            </p>
+          </Section>
+
           <div className="rounded-lg border-l-2 border-red-500 bg-red-50 px-3 py-2">
             <b className="text-red-900">This is not a medical forecast.</b>
             <p className="mt-0.5 text-red-900/80">

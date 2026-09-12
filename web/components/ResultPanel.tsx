@@ -1,5 +1,6 @@
 "use client";
 
+import ValueBadge from "@/components/ValueBadge";
 import type { AdaptResult, CrashResult, Meta, Selection } from "@/lib/types";
 
 interface Props {
@@ -59,24 +60,40 @@ export default function ResultPanel({ meta, sel, result, adapted, hotspots }: Pr
 
   return (
     <div className="w-[350px] space-y-3 rounded-xl border border-slate-200 bg-white/95 p-4 shadow-lg backdrop-blur">
-      <div className="text-[11px] text-slate-600">
-        {scenario?.label} · {sel.hour}:00 · {persona?.label}
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-[11px] text-slate-600">
+          {scenario?.label} · {sel.hour}:00 · {persona?.label}
+        </span>
+        {/* Snapshot identity: this number belongs to these inputs. */}
+        <span
+          className="cursor-help font-mono text-[9px] text-slate-400"
+          title={`Snapshot ${result.snapshot_id}\nThis result is only valid for the inputs that produced it.`}
+        >
+          {result.snapshot_id}
+        </span>
       </div>
 
       {/* 1 - the weather that goes in */}
       <Layer n={1} title="Weather input">
         <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-slate-700">
-          <span>{c.air_temp_c.toFixed(1)} °C air</span>
+          <span>
+            {c.air_temp_c.toFixed(1)} °C air
+            <ValueBadge meta={meta.value_meta?.air_temp_c} compact />
+          </span>
           <span>{c.rh_pct.toFixed(0)}% RH</span>
           <span>{c.wind_ms.toFixed(1)} m/s wind</span>
           <span className="text-slate-500">
             Tmrt {c.tmrt_shade_c.toFixed(0)}–{c.tmrt_sun_c.toFixed(0)} °C
+            <ValueBadge meta={meta.value_meta?.tmrt_c} compact />
           </span>
         </div>
       </Layer>
 
       {/* 2 - what that does to a body */}
       <Layer n={2} title="Thermal stress (UTCI)">
+        <div className="mb-1">
+          <ValueBadge meta={meta.value_meta?.utci_c} />
+        </div>
         <div className="flex items-end gap-4">
           <div>
             <div className="text-3xl font-bold tabular-nums text-orange-700">
@@ -112,6 +129,7 @@ export default function ResultPanel({ meta, sel, result, adapted, hotspots }: Pr
               <span className="ml-1 text-xs font-normal text-slate-500">
                 severe person-minutes
               </span>
+              <ValueBadge meta={meta.value_meta?.severe_person_minutes} compact />
             </div>
             <p className="text-[11px] text-slate-500">
               at or above {meta.severe_threshold_utci_c} °C ·{" "}
@@ -120,6 +138,7 @@ export default function ResultPanel({ meta, sel, result, adapted, hotspots }: Pr
             <p className="text-[11px] text-slate-600">
               {fmt(result.walking_severe_total)} walking ·{" "}
               {fmt(result.waiting_severe_total)} waiting at stops
+              <ValueBadge meta={meta.value_meta?.waiting_minutes} compact />
             </p>
             {!useSevere && (
               <p className="mt-1 text-[11px] text-sky-800">

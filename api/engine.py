@@ -48,6 +48,9 @@ from pathlib import Path
 
 import numpy as np
 
+from provenance import (build_catalogue, canonical, fnv1a, input_hash,
+                        snapshot_id)
+
 ROOT = Path(__file__).resolve().parent.parent
 CACHE = ROOT / "data" / "cache"
 
@@ -74,6 +77,11 @@ class Result:
     weighted_severe_total: float = 0.0
     planning_weight: float = 1.0
     meta: dict = field(default_factory=dict)
+    # Snapshot identity. A result is only valid for the inputs that produced
+    # it, and this is what lets a consumer prove that.
+    input_hash: str = ""
+    snapshot_id: str = ""
+    status: str = "complete"
 
 
 class Engine:
@@ -117,6 +125,29 @@ class Engine:
                         for p in self.trip_meta["personas"]}
         self.index = {sid: i for i, sid in enumerate(self.seg_ids)}
 
+        # Fingerprint of the artifacts themselves. If the pipeline is rebuilt
+        # with different geometry, trips or climate, every cached answer from
+        # the old build stops matching and is refused rather than reused.
+        self.dataset_version = fnv1a(canonical({
+            "segments": len(self.seg_ids),
+            "hours": self.hours,
+            "personas": self.personas,
+            "seed": self.trip_meta.get("seed"),
+            "deltas": [round(float(v["delta_c"]), 4)
+                       for v in self.scenarios["scenarios"].values()],
+            "sun": round(float(self.sun_exposure.sum()), 3),
+            "minutes": round(float(self.minutes.sum()), 3),
+            "wait": round(float(self.wait_minutes.sum()), 3),
+        }))
+        self.value_meta = build_catalogue(self)
+
+    def input_hash(self, scenario: str, hour: int, persona: str,
+                   budget_usd: float | None = None,
+                   kinds: list[str] | None = None) -> str:
+        return input_hash(dataset_version=self.dataset_version,
+                          scenario=scenario, hour=hour, persona=persona,
+                          budget_usd=budget_usd, kinds=kinds)
+
     # -- lookups ------------------------------------------------------------
 
     def hour_index(self, hour: int) -> int:
@@ -153,6 +184,7 @@ class Engine:
         hi = self.hour_index(hour)
         p_idx = self.persona_index(persona)
         cond = self.conditions(scenario, hour)
+        ihash = self.input_hash(scenario, hour, persona)
 
         sun = self.sun_exposure[:, hi].astype(np.float64)
         if sun_delta is not None:
@@ -199,6 +231,8 @@ class Engine:
             heat_load_total=float(load.sum()),
             weighted_severe_total=float(severe.sum() * weight),
             planning_weight=weight,
+            input_hash=ihash, snapshot_id=snapshot_id(ihash, "crash"),
+            status="complete",
             meta={"air_temp_c": cond["air_temp_c"], "rh_pct": cond["rh_pct"],
                   "wind_ms": cond["wind_ms"],
                   "tmrt_sun_c": cond["tmrt_sun_c"],
@@ -302,6 +336,7 @@ class Adapter:
         greedy explores one unit at a time rather than every combination.
         """
         kinds = kinds or list(INTERVENTIONS)
+        plan_hash = self.e.input_hash(scenario, hour, persona, budget_usd, kinds)
         hi = self.e.hour_index(hour)
         p = self.e.persona_index(persona)
         cond = self.e.conditions(scenario, hour)
@@ -402,4 +437,7 @@ class Adapter:
             "shelter_delta": cover_delta,
             "reduction_pct": 100.0 * num / denom,
             "metric_used": "severe_person_minutes" if base.severe_total else "heat_load",
+            "input_hash": plan_hash,
+            "snapshot_id": snapshot_id(plan_hash, "adapt"),
+            "status": "complete",
         }

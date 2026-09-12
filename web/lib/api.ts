@@ -10,6 +10,7 @@
  * The only capability lost in fallback mode is an arbitrary budget: static
  * results exist for the preset budgets only.
  */
+import { inputHash, validateSnapshot } from "./provenance";
 import type {
   AdaptResult, CrashResult, ImpactScope, Meta, Placement, Selection, SourceMode,
 } from "./types";
@@ -65,6 +66,9 @@ const bundle: {
 } = {};
 
 interface RawAdapt {
+  input_hash: string;
+  snapshot_id: string;
+  status: string;
   spent_usd: number;
   counts: Record<string, number>;
   metric_used: string;
@@ -103,8 +107,28 @@ async function adaptBundle() {
   return bundle.adapts!;
 }
 
+/** The hash this request must be answered with. */
+function expectedCrashHash(meta: Meta, sel: Selection): string {
+  return inputHash({
+    datasetVersion: meta.dataset_version, scenario: sel.scenario,
+    hour: sel.hour, persona: sel.persona,
+  });
+}
+
+function expectedAdaptHash(meta: Meta, sel: Selection): string {
+  return inputHash({
+    datasetVersion: meta.dataset_version, scenario: sel.scenario,
+    hour: sel.hour, persona: sel.persona, budgetUsd: sel.budget,
+    kinds: sel.variant === "all" ? null : [sel.variant],
+  });
+}
+
 export async function crashTest(sel: Selection): Promise<CrashResult> {
+  const meta = await loadMeta();
+  const expected = expectedCrashHash(meta, sel);
+
   const live = await tryApi<{
+    input_hash: string; snapshot_id: string; status: string;
     severe_person_minutes: number; heat_load: number;
     walking_severe_person_minutes: number; waiting_severe_person_minutes: number;
     weighted_severe_person_minutes: number; planning_weight: number;
@@ -122,9 +146,13 @@ export async function crashTest(sel: Selection): Promise<CrashResult> {
   });
 
   if (live) {
+    const check = validateSnapshot(live, expected);
+    if (!check.ok) throw new Error(check.reason ?? "snapshot rejected");
     setMode("live");
     const { utci_sun_c, utci_shade_c, ...cond } = live.conditions;
     return {
+      input_hash: live.input_hash, snapshot_id: live.snapshot_id,
+      status: live.status,
       severe_total: live.severe_person_minutes,
       walking_severe_total: live.walking_severe_person_minutes,
       waiting_severe_total: live.waiting_severe_person_minutes,
@@ -143,11 +171,18 @@ export async function crashTest(sel: Selection): Promise<CrashResult> {
   const b = await crashBundle();
   const r = b.results[`${sel.scenario}|${sel.hour}|${sel.persona}`];
   if (!r) throw new Error("no precomputed result for that combination");
+  // A cache is only usable when it answers this exact question.
+  const cached = validateSnapshot(r, expected);
+  if (!cached.ok) throw new Error(cached.reason ?? "cached snapshot rejected");
   return { ...r, sun: b.sun_by_hour[String(sel.hour)] };
 }
 
 export async function adapt(sel: Selection, before: CrashResult): Promise<AdaptResult> {
+  const meta0 = await loadMeta();
+  const expected = expectedAdaptHash(meta0, sel);
+
   const live = await tryApi<{
+    input_hash: string; snapshot_id: string; status: string;
     spent_usd: number; counts: Record<string, number>; metric_used: string;
     before_severe: number; after_severe: number;
     before_walking_severe: number; after_walking_severe: number;
@@ -175,8 +210,12 @@ export async function adapt(sel: Selection, before: CrashResult): Promise<AdaptR
       if (cur) cur.count += 1;
       else tally.set(k, { seg_id: p.seg_id, kind: p.kind, count: 1 });
     }
+    const check = validateSnapshot(live, expected);
+    if (!check.ok) throw new Error(check.reason ?? "plan rejected");
     const useSevere = live.metric_used === "severe_person_minutes";
     return {
+      input_hash: live.input_hash, snapshot_id: live.snapshot_id,
+      status: live.status,
       spent_usd: live.spent_usd, counts: live.counts,
       metric_used: live.metric_used,
       before_severe: live.before_severe, after_severe: live.after_severe,
@@ -199,11 +238,16 @@ export async function adapt(sel: Selection, before: CrashResult): Promise<AdaptR
   const r = b.results[
     `${sel.scenario}|${sel.hour}|${sel.persona}|${sel.budget}|${sel.variant}`];
   if (!r) throw new Error("no precomputed adapt for that budget");
+  // The spec's rule, enforced rather than intended: never serve one budget's
+  // cached plan for another.
+  const cachedPlan = validateSnapshot(r, expected);
+  if (!cachedPlan.ok) throw new Error(cachedPlan.reason ?? "cached plan rejected");
   // Static results ship as a diff against the baseline; rebuild the full array.
   const useSevere = r.metric_used === "severe_person_minutes";
   const metric_values = (useSevere ? before.severe_minutes : before.heat_load).slice();
   for (const [i, v] of r.changed) metric_values[i] = v;
   return {
+    input_hash: r.input_hash, snapshot_id: r.snapshot_id, status: r.status,
     spent_usd: r.spent_usd, counts: r.counts, metric_used: r.metric_used,
     before_severe: r.before_severe, after_severe: r.after_severe,
     before_walking_severe: r.before_walking_severe,

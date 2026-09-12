@@ -53,6 +53,8 @@ export interface Meta {
   severe_threshold_utci_c: number;
   heat_load_base_utci_c: number;
   hero_corridors: string[];
+  dataset_version: string;
+  value_meta: Record<string, import("./provenance").ValueMeta>;
   waiting_exposure: WaitingMeta | null;
   variants: string[];
   canopy: CanopyMeta | null;
@@ -86,6 +88,9 @@ export interface WaitingMeta {
 }
 
 export interface CrashResult {
+  input_hash: string;
+  snapshot_id: string;
+  status: string;
   severe_total: number;          // walking + waiting, at or above UTCI 38 C
   walking_severe_total: number;
   waiting_severe_total: number;
@@ -119,6 +124,9 @@ export interface Placement {
 }
 
 export interface AdaptResult {
+  input_hash: string;
+  snapshot_id: string;
+  status: string;
   spent_usd: number;
   counts: Record<string, number>;
   metric_used: string;

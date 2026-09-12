@@ -210,6 +210,9 @@ def main() -> None:
             for persona in e.personas:
                 r = e.crash_test(sc, hour, persona)
                 crash[f"{sc}|{hour}|{persona}"] = {
+                    "input_hash": r.input_hash,
+                    "snapshot_id": r.snapshot_id,
+                    "status": r.status,
                     "severe_total": round(r.severe_total, 2),
                     "walking_severe_total": round(r.walking_severe_total, 2),
                     "waiting_severe_total": round(r.waiting_severe_total, 2),
@@ -242,6 +245,9 @@ def main() -> None:
                     # the difference between an 8 MB bundle and a 100 KB one.
                     moved = np.nonzero(np.abs(after - before) > 1e-6)[0]
                     adapts[f"{sc}|{hour}|{persona}|{budget}|{vname}"] = {
+                        "input_hash": out["input_hash"],
+                        "snapshot_id": out["snapshot_id"],
+                        "status": out["status"],
                         "spent_usd": out["spent_usd"],
                         "counts": out["counts"],
                         "metric_used": out["metric_used"],
@@ -294,6 +300,8 @@ def main() -> None:
                             if (CACHE / "wait_meta.json").exists() else None,
         # One entry per height source, so each building only carries its key.
         "height_sources": _height_sources(),
+        "dataset_version": e.dataset_version,
+        "value_meta": e.value_meta,
         "personas": [{"key": p["persona"], "label": p["label"],
                       "speed_mps": p["speed_mps"],
                       "planning_weight": p["planning_weight"],
