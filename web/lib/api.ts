@@ -85,6 +85,8 @@ interface RawAdapt {
   after_waiting_severe: number;
   before_heat_load: number;
   after_heat_load: number;
+  before_experienced_utci_c: number;
+  after_experienced_utci_c: number;
   reduction_pct: number;
   impact_scopes: ImpactScope[];
   rank_trace: AdaptResult["rank_trace"];
@@ -94,8 +96,8 @@ interface RawAdapt {
   /** Only the segments an intervention actually touched. */
   after_sun_diff: [number, number][];
   after_utci_diff: [number, number][];
-  /** [kindIndex, lon, lat, phase] per purchased unit. */
-  units: [number, number, number, number][];
+  /** [kindIndex, lon, lat, phase, bearing_deg] per purchased unit. */
+  units: [number, number, number, number, number][];
   changed: [number, number][];
   placements: [number, number, number][];
 }
@@ -114,6 +116,30 @@ export async function loadMeta(): Promise<Meta> {
 async function crashBundle() {
   if (!bundle.crash) bundle.crash = await statik("crash_tests.json");
   return bundle.crash!;
+}
+
+/** Metres per degree at Oakland's latitude - the engine's own constants. */
+const M_PER_DEG_LAT = 110_940;
+const M_PER_DEG_LON = 84_600;
+
+/**
+ * An oriented rectangle around a point. The exact twin of the engine's
+ * `Adapter._rect`, so a footprint rebuilt from the offline bundle is the
+ * same polygon the live engine returns.
+ */
+function rect(lon: number, lat: number, bearingDeg: number,
+  alongM: number, acrossM: number): [number, number][] {
+  const th = (bearingDeg * Math.PI) / 180;
+  const [ux, uy] = [Math.cos(th), Math.sin(th)];
+  const [vx, vy] = [-uy, ux];
+  const [a, b] = [alongM / 2, acrossM / 2];
+  return ([[1, 1], [1, -1], [-1, -1], [-1, 1], [1, 1]] as [number, number][])
+    .map(([sa, sb]) => {
+      const dx = sa * a * ux + sb * b * vx;
+      const dy = sa * a * uy + sb * b * vy;
+      return [Number((lon + dx / M_PER_DEG_LON).toFixed(6)),
+        Number((lat + dy / M_PER_DEG_LAT).toFixed(6))] as [number, number];
+    });
 }
 
 /** Rebuild a full array from a base plus the indices that changed. */
@@ -152,6 +178,7 @@ export async function crashTest(sel: ReadySelection): Promise<CrashResult> {
   const live = await tryApi<{
     input_hash: string; snapshot_id: string; status: string;
     severe_person_minutes: number; heat_load: number;
+    experienced_utci_c: number; person_minutes: number;
     walking_severe_person_minutes: number; waiting_severe_person_minutes: number;
     weighted_severe_person_minutes: number; planning_weight: number;
     conditions: CrashResult["conditions"] & {
@@ -185,6 +212,8 @@ export async function crashTest(sel: ReadySelection): Promise<CrashResult> {
       weighted_severe_total: live.weighted_severe_person_minutes,
       planning_weight: live.planning_weight,
       utci_sun_c, utci_shade_c, conditions: cond,
+      experienced_utci_c: live.experienced_utci_c,
+      person_minutes_total: live.person_minutes,
       severe_minutes: live.segments.map((s) => s.severe_minutes),
       heat_load: live.segments.map((s) => s.heat_load),
       sun: live.segments.map((s) => s.sun_exposure),
@@ -213,12 +242,14 @@ export async function adapt(sel: ReadySelection, before: CrashResult): Promise<A
     before_walking_severe: number; after_walking_severe: number;
     before_waiting_severe: number; after_waiting_severe: number;
     before_heat_load: number; after_heat_load: number;
+    before_experienced_utci_c: number; after_experienced_utci_c: number;
     reduction_pct: number; impact_scopes: ImpactScope[];
     rank_trace: AdaptResult["rank_trace"];
     policy: string; policy_label: string;
     service_floor: AdaptResult["service_floor"];
     after_sun: number[]; after_utci_c: number[];
     unit_placements: AdaptResult["unit_placements"];
+    shade_footprints: GeoJSON.FeatureCollection;
     segments: { severe_minutes: number; heat_load: number }[];
     placements: { seg_id: string; kind: string }[];
   }>("/adapt", {
@@ -255,6 +286,8 @@ export async function adapt(sel: ReadySelection, before: CrashResult): Promise<A
       after_waiting_severe: live.after_waiting_severe,
       before_heat_load: live.before_heat_load,
       after_heat_load: live.after_heat_load,
+      before_experienced_utci_c: live.before_experienced_utci_c,
+      after_experienced_utci_c: live.after_experienced_utci_c,
       reduction_pct: live.reduction_pct,
       impact_scopes: live.impact_scopes,
       rank_trace: live.rank_trace,
@@ -262,6 +295,7 @@ export async function adapt(sel: ReadySelection, before: CrashResult): Promise<A
     service_floor: live.service_floor,
     after_sun: live.after_sun, after_utci_c: live.after_utci_c,
     unit_placements: live.unit_placements,
+    shade_footprints: live.shade_footprints,
       metric_values: live.segments.map((s) =>
         useSevere ? s.severe_minutes : s.heat_load),
       placements: [...tally.values()],
@@ -279,6 +313,14 @@ export async function adapt(sel: ReadySelection, before: CrashResult): Promise<A
   if (!cachedPlan.ok) throw new Error(cachedPlan.reason ?? "cached plan rejected");
   // Static results ship as a diff against the baseline; rebuild the full array.
   const useSevere = r.metric_used === "severe_person_minutes";
+  const cachedUnits = r.units.map(([k, lon, lat, phase, bearing], i) => ({
+    unitId: `${b.kinds[k]}-${i}`,
+    siteId: `${b.kinds[k]}-${i}`,
+    kind: b.kinds[k] as "tree" | "shaded_shelter",
+    segmentId: "", stopId: null,
+    lon, lat, bearing_deg: bearing ?? 0, costUsd: 0, order: i,
+    phase: phase === 0 ? "service_floor" as const : "marginal" as const,
+  }));
   const metric_values = (useSevere ? before.severe_minutes : before.heat_load).slice();
   for (const [i, v] of r.changed) metric_values[i] = v;
   return {
@@ -290,6 +332,8 @@ export async function adapt(sel: ReadySelection, before: CrashResult): Promise<A
     before_waiting_severe: r.before_waiting_severe,
     after_waiting_severe: r.after_waiting_severe,
     before_heat_load: r.before_heat_load, after_heat_load: r.after_heat_load,
+    before_experienced_utci_c: r.before_experienced_utci_c,
+    after_experienced_utci_c: r.after_experienced_utci_c,
     reduction_pct: r.reduction_pct, impact_scopes: r.impact_scopes,
     rank_trace: r.rank_trace,
     policy: r.policy, policy_label: r.policy_label,
@@ -300,13 +344,28 @@ export async function adapt(sel: ReadySelection, before: CrashResult): Promise<A
     after_utci_c: applyDiff(
       before.sun.map((v) => v * before.utci_sun_c + (1 - v) * before.utci_shade_c),
       r.after_utci_diff),
-    unit_placements: r.units.map(([k, lon, lat, phase], i) => ({
-      unitId: `${b.kinds[k]}-${i}`,
-      kind: b.kinds[k] as "tree" | "shaded_shelter",
-      segmentId: "", stopId: null,
-      lon, lat, costUsd: 0, order: i,
-      phase: phase === 0 ? "service_floor" as const : "marginal" as const,
-    })),
+    unit_placements: cachedUnits,
+    // The cached bundle ships each unit's coordinate and street bearing, and
+    // meta ships the engine's footprint dimensions. Rebuilding the rectangle
+    // from those is decompression, not invention: offline and online draw
+    // the identical modelled shade.
+    shade_footprints: {
+      type: "FeatureCollection",
+      features: cachedUnits.map((u) => {
+        const dim = meta.footprint_m?.[u.kind]
+          ?? { along_m: 8, across_m: 8 };
+        return {
+          type: "Feature" as const,
+          properties: { unitId: u.unitId, siteId: u.siteId, kind: u.kind,
+            order: u.order, along_m: dim.along_m, across_m: dim.across_m },
+          geometry: {
+            type: "Polygon" as const,
+            coordinates: [rect(u.lon, u.lat, u.bearing_deg,
+              dim.along_m, dim.across_m)],
+          },
+        };
+      }),
+    },
     metric_values,
     placements: r.placements.map(([si, ki, n]) => ({
       seg_id: meta.seg_ids[si], kind: b.kinds[ki], count: n,

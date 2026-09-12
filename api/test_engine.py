@@ -244,6 +244,75 @@ def main() -> int:
           kinds["source"] > 0 and kinds["assumption"] > 0,
           " / ".join(f"{k}:{v}" for k, v in kinds.items()))
 
+    # --- 2.6: experienced UTCI and the candidate-site layer ---------------
+    # The burden number must be what people felt, which lies between the
+    # full-shade and full-sun anchors and is weighted by person-minutes.
+    check("experienced UTCI sits between the shade and sun anchors",
+          base.utci_shade_c < base.experienced_utci_c < base.utci_sun_c,
+          f"{base.utci_shade_c:.2f} < {base.experienced_utci_c:.2f} "
+          f"< {base.utci_sun_c:.2f}")
+
+    hi_ = e.hour_index(HERO[1])
+    p_ = e.persona_index(HERO[2])
+    walk = e.minutes[:, p_, hi_].astype(float)
+    wait = e.wait_minutes[:, p_, hi_].astype(float)
+    check("experienced UTCI is person-minute weighted, not a segment mean",
+          abs(base.person_minutes_total - float(walk.sum() + wait.sum())) < 1e-3,
+          f"{base.person_minutes_total:.1f} person-min")
+    seg_mean = float(base.utci_c.mean())
+    check("weighted UTCI differs from the unweighted segment mean",
+          abs(seg_mean - base.experienced_utci_c) > 0.05,
+          f"weighted {base.experienced_utci_c:.2f} vs mean {seg_mean:.2f}")
+
+    plan = a.optimize(*HERO, 250000)
+    check("a plan lowers the experienced UTCI",
+          plan["after"].experienced_utci_c < plan["before"].experienced_utci_c,
+          f"{plan['before'].experienced_utci_c:.2f} -> "
+          f"{plan['after'].experienced_utci_c:.2f} C")
+    check("a plan never changes the air temperature",
+          plan["after"].meta["air_temp_c"] == plan["before"].meta["air_temp_c"],
+          f"{plan['before'].meta['air_temp_c']} C both sides")
+
+    # Candidate sites, not a fraction of a segment: two trees bought on the
+    # same street component must be at least one spacing apart on the ground.
+    from engine import SITE_SPACING_M
+    from collections import defaultdict
+    by_seg = defaultdict(list)
+    for u in plan["unit_placements"]:
+        if u["kind"] == "tree":
+            by_seg[u["segmentId"]].append(u)
+    worst, pairs = 1e9, 0
+    for sid, us in by_seg.items():
+        for i in range(len(us)):
+            for j in range(i + 1, len(us)):
+                dx = (us[i]["lon"] - us[j]["lon"]) * 84_600.0
+                dy = (us[i]["lat"] - us[j]["lat"]) * 110_940.0
+                worst = min(worst, (dx * dx + dy * dy) ** 0.5)
+                pairs += 1
+    check("trees on one segment respect the minimum spacing",
+          pairs == 0 or worst >= SITE_SPACING_M - 0.5,
+          f"{pairs} pairs, closest {worst:.1f} m, floor {SITE_SPACING_M} m"
+          if pairs else "no segment took two trees")
+
+    check("every purchased unit names a stable candidate site",
+          len({u["siteId"] for u in plan["unit_placements"]})
+          == len(plan["unit_placements"]),
+          f"{len(plan['unit_placements'])} sites")
+
+    fps = plan["shade_footprints"]["features"]
+    check("one shade footprint per purchased unit",
+          len(fps) == len(plan["unit_placements"]),
+          f"{len(fps)} polygons")
+    check("shade footprints are closed rings",
+          all(f["geometry"]["coordinates"][0][0]
+              == f["geometry"]["coordinates"][0][-1] for f in fps))
+    # The footprint is the modelled shade, so its size must match the
+    # intervention it belongs to rather than a drawing radius.
+    tree_fp = next(f for f in fps if f["properties"]["kind"] == "tree")
+    check("footprint dimensions come from the intervention",
+          tree_fp["properties"]["along_m"] == INTERVENTIONS["tree"]["shade_m"],
+          f"{tree_fp['properties']['along_m']} m along the footway")
+
     # --- determinism ------------------------------------------------------
     r1 = e.crash_test(*HERO).severe_total
     r2 = e.crash_test(*HERO).severe_total

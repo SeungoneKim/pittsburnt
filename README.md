@@ -62,14 +62,36 @@ make api     # FastAPI engine on :8000
 make web     # Next.js frontend on :3000  ->  open http://localhost:3000
 ```
 
-Then: pick a time / population / scenario, hit **RUN CRASH TEST**, then
-**ADAPT PITTSBURGH**.
+It opens on a context map with nothing pre-answered. Pick a time, a
+population and a future scenario; the walkers start moving as soon as the
+first two are set. Then **RUN CRASH TEST**, and the same button morphs into
+**ADJUST**.
 
 The frontend works with the API down — it falls back to a precomputed static
 bundle in `web/public/data` and says so in the UI.
 
 Set `NEXT_PUBLIC_MAPBOX_TOKEN` in `web/.env.local` for Mapbox styling;
 without it the map renders via MapLibre on OpenStreetMap tiles.
+
+### Add a solution (Beta) — optional
+
+The Adjust panel has a Beta side door that researches a proposed measure with
+Gemini and structures it into typed fields, then runs it through a
+deterministic gate that decides whether this engine can honestly represent
+that physics. Only a draft that clears the gate, and that a person confirms,
+reaches the optimiser — every placement and impact number in the result is
+still the engine's.
+
+To enable live research, copy `.env.example` to `.env`, put a Google AI Studio
+key in `GEMINI_API_KEY`, and export it before `make api`. **It is a
+server-side secret**: it is read by `api/gemini.py` and must never be given a
+`NEXT_PUBLIC_` prefix, because anything so prefixed is compiled into the
+browser bundle.
+
+Without a key nothing breaks. The panel returns cached example drafts that
+still demonstrate the whole gate — one measure that can be simulated and
+three that honestly cannot, each naming the evidence it is missing — and the
+Crash → Adjust → Re-test loop never touches the network.
 
 ## Rebuilding the data
 
@@ -94,17 +116,25 @@ committed, so a fresh clone can go straight to `make api` / `make web`.
 
 ```bash
 make check             # verify + test-engine together
-make verify            # 50 assertions over every cached artifact
-make test-engine       # 13 engine property tests
+make verify            # 71 assertions over every cached artifact
+make test-engine       # 56 engine property tests
 make check-determinism # proves the same seed reproduces the same trips
 make inspect           # visual QA map of the pipeline's geometry
+make gates             # 36 browser release gates (needs api + web running)
 ```
 
 `make verify` re-opens each artifact cold and checks what downstream code
 depends on — that shade sources never double-count, that low sun shades more
 than high sun, that hero corridors exist. `make test-engine` asserts the
 claims the demo makes on stage: hotter scenarios must score higher, shade
-must reduce but never zero exposure, the optimizer must respect its budget.
+must reduce but never zero exposure, the optimizer must respect its budget,
+two purchased trees on one street must be at least 10 m apart on the ground.
+
+`make gates` drives a real browser. It asserts the six things a judge has to
+see — an empty start, the 7.5 s crash sequence, people before numbers, three
+headline metrics, one CTA that morphs, the 10 s Adjust — plus the reset
+contract (no dynamic source feature, no segment feature-state, no running
+timer) and that nothing clips at 1366×768 or 1920×1080.
 
 ## Data sources
 
@@ -122,6 +152,34 @@ must reduce but never zero exposure, the optimizer must respect its budget.
 
 Pedestrian demand is **synthetic**, generated from a fixed seed so the before
 and after comparison runs the identical people over the identical geometry.
+
+## What people actually feel
+
+The headline thermal number is **Experienced UTCI**: person-minute-weighted
+across walking and waiting, using the sheltered or unsheltered value each
+waiting rider actually stood in. It is not the full-sun anchor, and it is not
+an unweighted mean over 2,409 street segments — that would let empty kerbs
+outvote the corridor everyone is on.
+
+The animated burden counter is **heat load**, which is continuous above
+26 °C. Severe exposure is reported beside it as the published-class count.
+Both matter: at 3 PM the 2035 and 2050 scenarios have *identical* severe
+totals, because the binary 38 °C threshold counts the same sun-exposed
+minutes once both cross it. Only heat load can see the difference.
+
+Playback runs at one declared 15× time compression for every persona, with no
+minimum duration. A 150 m route therefore takes an older adult 11.1 s on
+screen and a student 7.7 s — the difference is the point of the control.
+Zoom changes pixels per metre and nothing else; exposure is always computed
+in physical minutes.
+
+Trees are bought onto a **candidate-site layer**: sites walked along each
+centreline and kept only when at least 10 m from the previous one *in a
+straight line*. Measuring along the polyline is not enough — on a curved
+street two points 10 m apart along the kerb can be 7.8 m apart on the ground,
+which would let two crowns overlap and double-count the person-minutes
+underneath them. The shade each unit casts is returned by the engine as an
+oriented rectangle, not drawn by the map as a decorative circle.
 
 ## Honesty machinery
 

@@ -4,5 +4,8 @@ __pycache__/
 node_modules/
 .next/
 .env*.local
+.env
+!.env.example
 data/cache/inspect.html
 data/raw/
+tests/screenshots/

@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 
-import type { Hour, Meta, Selection } from "@/lib/types";
+import Panel from "@/components/Panel";
+import type { Meta, Selection } from "@/lib/types";
 
 const HOUR_LABEL: Record<number, string> = {
   8: "8 AM", 12: "12 PM", 15: "3 PM", 18: "6 PM",
@@ -34,19 +35,19 @@ export default function SetupCard({
   meta, sel, onChange, layers, onLayers, locked, onOpenSources,
 }: Props) {
   return (
-    <div className="pointer-events-auto w-[376px] overflow-hidden rounded-2xl
-      border border-slate-200/80 bg-white/95 shadow-xl shadow-slate-900/5
-      backdrop-blur">
-      <header className="px-5 pb-3 pt-4">
-        <h1 className="text-[24px] font-extrabold leading-none tracking-tight">
+    <Panel title="Set up the test" icon="🔧" width={332}>
+      <header className="px-4 pb-2 pt-1">
+        <h1 className="text-[23px] font-extrabold leading-none tracking-tight">
           MEET <span className="text-red-600">PITTSBURNT</span>
         </h1>
-        <p className="mt-1 text-[12px] uppercase tracking-[0.16em] text-slate-400">
+        <p className="mt-1 text-[11.5px] uppercase tracking-[0.16em] text-slate-400">
           A crash test for cities
         </p>
       </header>
 
-      <div className="max-h-[calc(100dvh-300px)] overflow-y-auto px-5 pb-5">
+      {/* Internal scrolling only, and only when the viewport is short: the
+          panel never grows past the window and never clips at 1366x768. */}
+      <div className="max-h-[calc(100dvh-260px)] overflow-y-auto px-4 pb-4">
         <Section icon="⏱" title="Time" help="time" onHelp={onOpenSources}>
           <Drop
             value={sel.hour}
@@ -81,8 +82,8 @@ export default function SetupCard({
           onHelp={onOpenSources}>
           <div className="flex flex-wrap gap-1.5">
             {([
-              ["trees", "Tree Inventory", "🌳"],
-              ["canopy", "Canopy Coverage", "🌲"],
+              ["trees", "Existing Tree Inventory", "🌳"],
+              ["canopy", "Existing Canopy Coverage", "🌲"],
               ["shadow", "Building Shade", "🏢"],
               ["agents", "Moving People", "🚶"],
               ["trips", "Walking Routes", "🗺"],
@@ -92,7 +93,7 @@ export default function SetupCard({
                 onClick={() => onLayers({ [key]: !layers[key] })}
                 aria-pressed={layers[key]}
                 className={`flex items-center gap-1.5 rounded-full border px-3
-                  py-1.5 text-[12.5px] transition ${
+                  py-1.5 text-[12px] transition ${
                     layers[key]
                       ? "border-emerald-300 bg-emerald-50 font-medium text-emerald-900"
                       : "border-slate-200 bg-white text-slate-500 hover:border-slate-400"
@@ -104,7 +105,7 @@ export default function SetupCard({
           </div>
         </Section>
       </div>
-    </div>
+    </Panel>
   );
 }
 
@@ -123,7 +124,7 @@ function Section({ icon, title, help, onHelp, children }: {
     >
       <div className="mb-2 flex items-center gap-2">
         <span aria-hidden className="text-[14px]">{icon}</span>
-        <h2 className="text-[12px] font-semibold uppercase tracking-[0.1em]
+        <h2 className="text-[13px] font-semibold uppercase tracking-[0.1em]
           text-slate-500">{title}</h2>
         {/* Help appears on hover or focus, so it is discoverable without
             occupying the resting surface. */}
@@ -168,7 +169,7 @@ function Drop<T extends string | number>({
           onSelect((numeric ? Number(v) : v) as T);
         }}
         className={`w-full appearance-none rounded-xl border px-3.5 py-3
-          pr-10 text-[17px] font-semibold transition
+          pr-10 text-[16.5px] font-semibold transition
           disabled:cursor-not-allowed disabled:opacity-60 ${
             value === null
               ? "border-slate-200 bg-slate-50 text-slate-400"

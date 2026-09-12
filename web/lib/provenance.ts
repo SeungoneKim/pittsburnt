@@ -106,3 +106,11 @@ export const STATUS_STYLE: Record<ValueStatus, string> = {
   assumption: "bg-amber-100 text-amber-800",
   missing: "bg-red-100 text-red-800",
 };
+
+/** The three-letter mark used on a value in the UI. */
+export const STATUS_ABBR: Record<ValueStatus, string> = {
+  source: "SOU",
+  computed: "COM",
+  assumption: "ASS",
+  missing: "MIS",
+};

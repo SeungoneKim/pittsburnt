@@ -62,6 +62,10 @@ export interface Meta {
   variants: string[];
   canopy: CanopyMeta | null;
   scope: Scope;
+  /** Modelled shade footprint per intervention, in metres. */
+  footprint_m: Record<string, { along_m: number; across_m: number }>;
+  /** Minimum spacing between two purchased trees, in metres. */
+  site_spacing_m: number;
   climate_method: Record<string, unknown>;
   canopy_source: string;
   canopy_vintage: string;
@@ -105,6 +109,8 @@ export interface BaselineState {
   label: string;
   air_temp_c: number;
   utci_sun_c: number;
+  /** Person-minute-weighted UTCI the cohort actually felt. */
+  experienced_utci_c: number;
   heat_load: number;
   severe: number;
 }
@@ -124,6 +130,13 @@ export interface CrashResult {
   planning_weight: number;
   utci_sun_c: number;
   utci_shade_c: number;
+  /**
+   * Person-minute-weighted UTCI: what the modelled cohort actually
+   * experienced across walking and waiting, not the full-sun anchor and not
+   * an unweighted mean over 2,409 street segments.
+   */
+  experienced_utci_c: number;
+  person_minutes_total: number;
   conditions: Conditions;
   severe_minutes: number[];
   heat_load: number[];
@@ -164,11 +177,15 @@ export interface RankTrace {
 
 export interface UnitPlacement {
   unitId: string;
+  /** Stable id of the candidate site this unit was bought onto. */
+  siteId: string;
   kind: "tree" | "shaded_shelter";
   segmentId: string;
   stopId: string | null;
   lon: number;
   lat: number;
+  /** Street bearing at the site, so shade is drawn along the footway. */
+  bearing_deg: number;
   costUsd: number;
   order: number;
   phase: "service_floor" | "marginal";
@@ -190,6 +207,8 @@ export interface AdaptResult {
   after_sun: number[];
   after_utci_c: number[];
   unit_placements: UnitPlacement[];
+  /** Engine-owned shade geometry. The map draws it; it never invents it. */
+  shade_footprints: GeoJSON.FeatureCollection;
   snapshot_id: string;
   status: string;
   spent_usd: number;
@@ -203,6 +222,8 @@ export interface AdaptResult {
   after_waiting_severe: number;
   before_heat_load: number;
   after_heat_load: number;
+  before_experienced_utci_c: number;
+  after_experienced_utci_c: number;
   reduction_pct: number;
   impact_scopes: ImpactScope[];
   /** Post-intervention values of whichever metric is in use. */

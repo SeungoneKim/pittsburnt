@@ -29,19 +29,29 @@ export default function ThreeState({ meta, sel, result, adapted }: {
       before: f(result.conditions.air_temp_c),
       after: adapted ? f(result.conditions.air_temp_c) : null,
       // Weather is identical before and after: shade does not cool the air
-      // mass, and pretending otherwise would be the easiest lie here.
-      delta: adapted ? "unchanged" : null,
+      // mass, and pretending otherwise would be the easiest lie here. It is
+      // reported neutral, never green - an unchanged number is not a win.
+      delta: adapted ? "same weather" : null,
       deltaTone: "flat" as const,
     },
     {
-      icon: "sun", label: "UTCI",
-      base: `${b.utci_sun_c.toFixed(1)}°C`,
-      before: `${result.utci_sun_c.toFixed(1)}°C`,
-      after: adapted ? "local" : null,
-      delta: adapted ? "by segment" : null,
-      deltaTone: "flat" as const,
+      // The person-minute-weighted value, not the full-sun anchor and not
+      // "local by segment", which was a label where a number belonged.
+      icon: "sun", label: "Experienced UTCI",
+      base: `${b.experienced_utci_c.toFixed(2)}°C`,
+      before: `${(adapted?.before_experienced_utci_c
+        ?? result.experienced_utci_c).toFixed(2)}°C`,
+      after: adapted ? `${adapted.after_experienced_utci_c.toFixed(2)}°C` : null,
+      delta: adapted
+        ? `${(adapted.after_experienced_utci_c
+          - adapted.before_experienced_utci_c).toFixed(2)} °C`
+        : null,
+      deltaTone: "good" as const,
     },
     {
+      // The primary burden number. It is continuous, so cooling from 37.9 to
+      // 34 registers; the severe count below it cannot, because both
+      // scenarios cross 38 C and the binary class counts the same minutes.
       icon: "load", label: "Heat load",
       base: fmt(b.heat_load),
       before: fmt(adapted ? adapted.before_heat_load : result.heat_load_total),
@@ -50,6 +60,7 @@ export default function ThreeState({ meta, sel, result, adapted }: {
         ? `${pct(adapted.before_heat_load, adapted.after_heat_load)}`
         : null,
       deltaTone: "good" as const,
+      primary: true,
     },
     {
       icon: "people", label: "Severe exposure",
@@ -71,9 +82,10 @@ export default function ThreeState({ meta, sel, result, adapted }: {
         {adapted && <span className="text-emerald-700"> after adjust</span>}
       </h2>
 
-      <div className="mt-2 grid grid-cols-[1fr_auto_auto_auto] gap-x-2 gap-y-1">
+      <div className="mt-2 grid grid-cols-[minmax(0,1fr)_auto_auto_auto]
+        gap-x-1 gap-y-1">
         <span />
-        <Head>2026<br />baseline</Head>
+        <Head>2026<br />base</Head>
         <Head>{isBaseline ? "—" : "future"}<br />before</Head>
         <Head active={!!adapted}>{isBaseline ? "—" : "future"}<br />after</Head>
 
@@ -81,7 +93,13 @@ export default function ThreeState({ meta, sel, result, adapted }: {
           <Row key={r.label} {...r} />
         ))}
       </div>
-      <p className="mt-1.5 text-[10px] leading-snug text-slate-500">
+      <p className="mt-2 text-[11.5px] leading-snug text-slate-500">
+        Humidity {result.conditions.rh_pct.toFixed(0)}%, wind{" "}
+        {result.conditions.wind_ms.toFixed(2)} m/s and solar radiation are{" "}
+        <b className="font-semibold text-slate-600">held constant</b> across
+        every column, so only air temperature carries the warming.
+      </p>
+      <p className="mt-1 text-[11.5px] leading-snug text-slate-500">
         The plan&apos;s effect is the change between the last two columns. The
         2026 column is context: comparing it with the adjusted future would
         credit shade with undoing the warming too.
@@ -97,34 +115,37 @@ function pct(before: number, after: number): string {
 
 function Head({ children, active }: { children: React.ReactNode; active?: boolean }) {
   return (
-    <div className={`px-2 text-center text-[9px] font-semibold uppercase
+    <div className={`px-1 text-center text-[9.5px] font-semibold uppercase
       leading-tight tracking-wide ${active ? "text-emerald-800" : "text-slate-400"}`}>
       {children}
     </div>
   );
 }
 
-function Row({ icon, label, base, before, after, delta, deltaTone, unit }: {
+function Row({ icon, label, base, before, after, delta, deltaTone, unit,
+  primary }: {
   icon: string; label: string; base: string; before: string;
   after: string | null; delta: string | null;
-  deltaTone: "good" | "flat"; unit?: string;
+  deltaTone: "good" | "flat"; unit?: string; primary?: boolean;
 }) {
   return (
     <>
-      <div className="flex items-baseline gap-1.5 py-1">
+      <div className="flex min-w-0 items-baseline gap-1 py-1">
         <RowMark kind={icon} />
-        <span className="text-[11px] uppercase tracking-wide text-slate-500">
+        <span className={`uppercase leading-tight tracking-wide ${primary
+          ? "text-[12px] font-bold text-slate-900"
+          : "text-[11.5px] text-slate-500"}`}>
           {label}
         </span>
         {unit && <span className="text-[9px] text-slate-400">{unit}</span>}
       </div>
       <Cell>{base}</Cell>
-      <Cell strong={!after}>{before}</Cell>
-      <Cell strong={!!after} active={!!after}>
+      <Cell strong={!after} primary={primary}>{before}</Cell>
+      <Cell strong={!!after} active={!!after} primary={primary}>
         {after ?? "—"}
         {delta && (
-          <span className={`mt-0.5 block text-[10px] font-semibold ${
-            deltaTone === "good" ? "text-emerald-700" : "text-slate-400"}`}>
+          <span className={`mt-0.5 block text-[11px] font-semibold ${
+            deltaTone === "good" ? "text-emerald-700" : "text-slate-500"}`}>
             {delta}
           </span>
         )}
@@ -147,13 +168,18 @@ function RowMark({ kind }: { kind: string }) {
   );
 }
 
-function Cell({ children, strong, active }: {
+function Cell({ children, strong, active, primary }: {
   children: React.ReactNode; strong?: boolean; active?: boolean;
+  primary?: boolean;
 }) {
+  const size = primary
+    ? (strong ? "text-[17px] font-extrabold text-slate-900"
+      : "text-[14px] font-semibold text-slate-600")
+    : (strong ? "text-[14.5px] font-bold text-slate-900"
+      : "text-[12.5px] text-slate-500");
   return (
-    <div className={`min-w-[62px] rounded-md px-2 py-1 text-center tabular-nums
-      ${active ? "bg-emerald-50" : ""}
-      ${strong ? "text-[15px] font-bold text-slate-900" : "text-[13px] text-slate-500"}`}>
+    <div className={`w-[60px] shrink-0 rounded-md px-1 py-1 text-center tabular-nums
+      ${active ? "bg-emerald-50" : ""} ${size}`}>
       {children}
     </div>
   );

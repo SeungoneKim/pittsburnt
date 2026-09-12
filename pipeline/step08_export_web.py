@@ -194,7 +194,8 @@ def main() -> None:
     # --- precomputed results ---------------------------------------------
     from collections import Counter
 
-    from engine import HEAT_LOAD_BASE_C, INTERVENTIONS, SEVERE_UTCI_C
+    from engine import (HEAT_LOAD_BASE_C, INTERVENTIONS, SEVERE_UTCI_C,
+                        SITE_SPACING_M)
     kinds = list(INTERVENTIONS)
     scenarios = list(e.scenarios["scenarios"])
     crash, adapts = {}, {}
@@ -219,6 +220,8 @@ def main() -> None:
                     "planning_weight": r.planning_weight,
                     "utci_sun_c": r.utci_sun_c,
                     "utci_shade_c": r.utci_shade_c,
+                    "experienced_utci_c": round(r.experienced_utci_c, 2),
+                    "person_minutes_total": round(r.person_minutes_total, 1),
                     "conditions": r.meta,
                     "severe_minutes": [round(float(x), 3) for x in r.severe_minutes],
                     "heat_load": [round(float(x), 2) for x in r.heat_load],
@@ -259,6 +262,10 @@ def main() -> None:
                         "after_waiting_severe": round(out["after"].waiting_severe_total, 2),
                         "before_heat_load": round(out["before"].heat_load_total, 2),
                         "after_heat_load": round(out["after"].heat_load_total, 2),
+                        "before_experienced_utci_c": round(
+                            out["before"].experienced_utci_c, 2),
+                        "after_experienced_utci_c": round(
+                            out["after"].experienced_utci_c, 2),
                         "reduction_pct": round(out["reduction_pct"], 2),
                         "impact_scopes": impact_scopes(e, props, out["before"],
                                                        out["after"]),
@@ -284,7 +291,8 @@ def main() -> None:
                         # x ~200 units makes key repetition the dominant cost.
                         "units": [[kinds.index(u["kind"]),
                                    round(u["lon"], 5), round(u["lat"], 5),
-                                   0 if u["phase"] == "service_floor" else 1]
+                                   0 if u["phase"] == "service_floor" else 1,
+                                   round(u["bearing_deg"], 1)]
                                   for u in out["unit_placements"]],
                         "rank_trace": out["rank_trace"],
                         "changed": [[int(i), round(float(after[i]), 2)] for i in moved],
@@ -303,7 +311,7 @@ def main() -> None:
         {"sun_by_hour": sun_by_hour, "results": crash}, separators=(",", ":")))
     (OUT / "adapts.json").write_text(json.dumps(
         {"kinds": kinds, "policies": POLICIES,
-         "unitFields": ["kind", "lon", "lat", "phase"],
+         "unitFields": ["kind", "lon", "lat", "phase", "bearing_deg"],
          "results": adapts},
         separators=(",", ":")))
 
@@ -320,6 +328,15 @@ def main() -> None:
                               }
                           for k, v in INTERVENTIONS.items()},
         "policies": POLICIES,
+        # Footprint dimensions are the engine's, not the map's. The fallback
+        # rebuilds the identical oriented rectangle from these plus each
+        # unit's bearing, so an offline demo draws the same modelled shade.
+        "footprint_m": {"tree": {"along_m": INTERVENTIONS["tree"]["shade_m"],
+                                 "across_m": 8.0},
+                        "shaded_shelter": {
+                            "along_m": INTERVENTIONS["shaded_shelter"]["shade_m"],
+                            "across_m": 3.0}},
+        "site_spacing_m": SITE_SPACING_M,
         "severe_threshold_utci_c": SEVERE_UTCI_C,
         "heat_load_base_utci_c": HEAT_LOAD_BASE_C,
         "hero_corridors": CORRIDORS,

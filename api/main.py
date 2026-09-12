@@ -15,6 +15,10 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+import copy
+
+import gemini
+import solutions
 from engine import (HEAT_LOAD_BASE_C, INTERVENTIONS, SEVERE_UTCI_C, Adapter,
                     Engine)
 
@@ -175,6 +179,10 @@ def crash_test(req: CrashTestRequest) -> dict:
         "conditions": {**res.meta,
                        "utci_sun_c": res.utci_sun_c,
                        "utci_shade_c": res.utci_shade_c},
+        # What the cohort actually felt, person-minute weighted. The full-sun
+        # anchor is the worst case on the street; this is the burden number.
+        "experienced_utci_c": round(res.experienced_utci_c, 2),
+        "person_minutes": round(res.person_minutes_total, 1),
         "snapshot_id": res.snapshot_id,
         "input_hash": res.input_hash,
         "status": res.status,
@@ -221,6 +229,8 @@ def adapt(req: AdaptRequest) -> dict:
         "after_waiting_severe": round(after.waiting_severe_total, 2),
         "before_heat_load": round(before.heat_load_total, 2),
         "after_heat_load": round(after.heat_load_total, 2),
+        "before_experienced_utci_c": round(before.experienced_utci_c, 2),
+        "after_experienced_utci_c": round(after.experienced_utci_c, 2),
         "reduction_pct": round(out["reduction_pct"], 2),
         "impact_scopes": scope,
         "policy": out["policy"],
@@ -233,11 +243,177 @@ def adapt(req: AdaptRequest) -> dict:
         "after_shelter_coverage": [round(float(x), 4)
                                    for x in out["after_shelter_coverage"]],
         "unit_placements": out["unit_placements"],
+        # Engine-owned shade geometry. The UI draws it; it never invents it.
+        "shade_footprints": out["shade_footprints"],
         "rank_trace": out["rank_trace"],
         "placements": out["placements"],
         "changed_segments": changed,
         **_segments_payload(after, 20),
         "claim_language": ("simulation-recommended allocation; greedy search, "
+                           "not a proven global optimum"),
+        "disclaimer": DISCLAIMER,
+    }
+
+
+# --- Add New Solution (Beta) ----------------------------------------------
+#
+# Cached example drafts. They are not decoration: without a key, or without a
+# network, these still demonstrate the whole gate - one measure that can be
+# simulated and three that honestly cannot, each with the specific evidence
+# that is missing. The demo never depends on a live model call.
+EXAMPLE_DRAFTS = [
+    {
+        "name": "Shade sail over the kerb",
+        "geometry": "linear", "mechanism": "solar_block",
+        "eligibleSite": "footway with 3 m clearance and anchor points",
+        "unitCost": {"capexUsd": 4200, "annualOpexUsd": 250,
+                     "sourceStatus": "user_assumption"},
+        "effect": [
+            {"parameter": "solar_block_fraction", "value": 0.9,
+             "unit": "fraction of direct beam", "sourceStatus": "user_assumption"},
+            {"parameter": "shaded_length_m", "value": 12, "unit": "m",
+             "sourceStatus": "user_assumption"},
+        ],
+        "confidence": "medium",
+        "openQuestions": ["Does the $4,200 include anchor engineering?"],
+    },
+    {
+        "name": "Reflective cool pavement",
+        "geometry": "area", "mechanism": "tmrt_modifier",
+        "eligibleSite": "carriageway resurfacing programme",
+        "unitCost": {"capexUsd": 30000, "sourceStatus": "user_assumption"},
+        "effect": [],
+        "confidence": "low",
+        "openQuestions": ["Is there measured Tmrt by hour over the treatment?"],
+    },
+    {
+        "name": "Misted shaded rest node",
+        "geometry": "point", "mechanism": "microclimate_node",
+        "eligibleSite": "plaza or widened footway with a water connection",
+        "unitCost": {"capexUsd": 9000, "annualOpexUsd": 1800,
+                     "sourceStatus": "user_assumption"},
+        "effect": [],
+        "confidence": "low",
+        "openQuestions": ["What air-temperature and RH delta, at what radius?"],
+    },
+    {
+        "name": "Hydration station",
+        "geometry": "point", "mechanism": "access_only",
+        "eligibleSite": "any footway with a water connection",
+        "unitCost": {"capexUsd": 6500, "sourceStatus": "user_assumption"},
+        "effect": [{"parameter": "service_radius_m", "value": 150, "unit": "m",
+                    "sourceStatus": "user_assumption"}],
+        "confidence": "medium", "openQuestions": [],
+    },
+]
+
+
+class SolutionChatRequest(BaseModel):
+    text: str = Field(..., min_length=3, max_length=800,
+                      examples=["Add misted rest shelters near busy stops."])
+
+
+class DraftRequest(BaseModel):
+    draft: dict
+
+
+class SolutionSimulateRequest(AdaptRequest):
+    draft: dict
+
+
+def _verdict(draft: dict) -> dict:
+    v = solutions.validate(draft)
+    return {"can_simulate": v.can_simulate, "status": v.status,
+            "reasons": v.reasons, "missing": v.missing,
+            "questions": v.questions, "mechanism_note": v.mechanism_note}
+
+
+@app.get("/solutions/mechanisms")
+def solution_mechanisms() -> dict:
+    """What this engine can honestly represent, and what each route needs."""
+    return {"configured": gemini.configured(),
+            "mechanisms": solutions.catalogue(),
+            "examples": [{"draft": d, "verdict": _verdict(d)}
+                         for d in EXAMPLE_DRAFTS],
+            "boundary": (
+                "Gemini may search, structure and question. It never invents "
+                "an effect, chooses a coordinate, alters an engine array or "
+                "commits a cost. Every placement and every impact number in a "
+                "simulated plan comes from the deterministic engine.")}
+
+
+@app.post("/solutions/chat")
+def solution_chat(req: SolutionChatRequest) -> dict:
+    """Research a proposal into a typed draft, then run it through the gate.
+
+    Degrades rather than fails: with no key, no network or a malformed reply,
+    the cached example drafts are returned and clearly labelled as such, so
+    the Crash -> Adjust -> Re-test loop stays fully local-first.
+    """
+    if not gemini.configured():
+        return {"mode": "cached", "reason": "GEMINI_API_KEY is not configured",
+                "examples": [{"draft": d, "verdict": _verdict(d)}
+                             for d in EXAMPLE_DRAFTS]}
+    try:
+        out = gemini.draft_solution(req.text)
+    except Exception as exc:                      # network, quota, bad JSON
+        return {"mode": "cached", "reason": f"live research unavailable: {exc}",
+                "examples": [{"draft": d, "verdict": _verdict(d)}
+                             for d in EXAMPLE_DRAFTS]}
+    return {"mode": "live", "draft": out["draft"], "research": out["research"],
+            "sources": out["sources"], "verdict": _verdict(out["draft"])}
+
+
+@app.post("/solutions/validate")
+def solution_validate(req: DraftRequest) -> dict:
+    """The gate, on its own. Deterministic, and the only path to a plan."""
+    return _verdict(req.draft)
+
+
+@app.post("/solutions/simulate")
+def solution_simulate(req: SolutionSimulateRequest) -> dict:
+    """Price and site a user-confirmed custom solution alongside the built-ins.
+
+    The draft only reaches the optimiser after clearing the gate. Placement,
+    spacing, spend and every impact number are the engine's, exactly as they
+    are for a street tree.
+    """
+    try:
+        spec = solutions.to_intervention(req.draft)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    # A per-request Adapter: a custom solution must never leak into the next
+    # caller's built-ins. The candidate-site layer is shared read-only.
+    local = copy.copy(adapter)
+    local.interventions = {k: dict(v) for k, v in adapter.interventions.items()}
+    key = local.register(spec)
+    try:
+        out = local.optimize(req.scenario, req.hour, req.persona,
+                             req.budget_usd, (req.kinds or None), req.policy)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    before, after = out["before"], out["after"]
+    return {
+        "request": {**req.model_dump(exclude={"draft"}), "custom_kind": key},
+        "custom": {"key": key, "label": spec["label"],
+                   "cost_usd": spec["cost_usd"], "block": spec["block"],
+                   "shade_m": spec["shade_m"], "mechanism": spec["mechanism"]},
+        "snapshot_id": out["snapshot_id"], "input_hash": out["input_hash"],
+        "status": out["status"],
+        "spent_usd": out["spent_usd"], "counts": out["counts"],
+        "before_severe": round(before.severe_total, 2),
+        "after_severe": round(after.severe_total, 2),
+        "before_heat_load": round(before.heat_load_total, 2),
+        "after_heat_load": round(after.heat_load_total, 2),
+        "before_experienced_utci_c": round(before.experienced_utci_c, 2),
+        "after_experienced_utci_c": round(after.experienced_utci_c, 2),
+        "reduction_pct": round(out["reduction_pct"], 2),
+        "impact_scopes": _impact_scopes(before, after),
+        "unit_placements": out["unit_placements"],
+        "shade_footprints": out["shade_footprints"],
+        "rank_trace": out["rank_trace"],
+        "claim_language": ("simulation-recommended allocation under a "
+                           "user-confirmed custom solution; greedy search, "
                            "not a proven global optimum"),
         "disclaimer": DISCLAIMER,
     }

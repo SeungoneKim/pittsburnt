@@ -57,6 +57,20 @@ CACHE = ROOT / "data" / "cache"
 SEVERE_UTCI_C = 38.0        # "Very Strong Heat Stress"
 HEAT_LOAD_BASE_C = 26.0     # onset of "Moderate Heat Stress"
 
+# Minimum spacing between two purchased street trees, in metres. The 2.6 spec
+# asks for a candidate-site layer at 8-10 m rather than a per-segment unit
+# count, so a segment's capacity is how many sites fit on it at this spacing
+# and each purchased unit lands on one of them. 10 m is the upper end of the
+# band: it exceeds the 8 m crown a mature tree casts, so two purchased crowns
+# on the same street component never overlap and no person-minute is counted
+# as protected twice.
+SITE_SPACING_M = 10.0
+
+# Local metre-per-degree scale at Oakland's latitude. Good to ~0.1% over a
+# 3 km study square, and it keeps the placement geometry dependency-free.
+_M_PER_DEG_LAT = 110_940.0
+_M_PER_DEG_LON = 84_600.0   # 111,320 x cos(40.44 deg)
+
 
 @dataclass
 class Result:
@@ -72,6 +86,11 @@ class Result:
     waiting_severe_total: float = 0.0
     utci_sun_c: float = 0.0
     utci_shade_c: float = 0.0
+    # Person-minute-weighted UTCI: what the modelled cohort actually felt,
+    # not the full-sun anchor. Waiting minutes use the sheltered or
+    # unsheltered value that rider actually stood in.
+    experienced_utci_c: float = 0.0
+    person_minutes_total: float = 0.0
     severe_total: float = 0.0
     heat_load_total: float = 0.0
     weighted_severe_total: float = 0.0
@@ -246,6 +265,15 @@ class Engine:
         utci = sun * u_sun + (1.0 - sun) * u_shade
         weight = self.weights.get(persona, 1.0)
 
+        # Experienced UTCI. A person-minute-weighted average over walking and
+        # waiting time - never an unweighted mean of street segments, which
+        # would let 2,409 empty kerbs outvote the corridor everyone is on.
+        person_minutes = float(minutes.sum() + waiting.sum())
+        degree_minutes = float(
+            (minutes * (sun * u_sun + (1.0 - sun) * u_shade)).sum()
+            + (waiting * (wait_sun * u_sun + (1.0 - wait_sun) * u_shade)).sum())
+        experienced = degree_minutes / person_minutes if person_minutes else u_shade
+
         return Result(
             seg_ids=self.seg_ids, utci_c=utci, severe_minutes=severe,
             heat_load=load, sun=sun, minutes=minutes,
@@ -253,6 +281,8 @@ class Engine:
             walking_severe_total=float(walk_sev.sum()),
             waiting_severe_total=float(wait_sev.sum()),
             utci_sun_c=u_sun, utci_shade_c=u_shade,
+            experienced_utci_c=experienced,
+            person_minutes_total=person_minutes,
             severe_total=float(severe.sum()),
             heat_load_total=float(load.sum()),
             weighted_severe_total=float(severe.sum() * weight),
@@ -279,6 +309,7 @@ class Engine:
             "label": self.scenarios["scenarios"]["baseline"]["label"],
             "air_temp_c": r.meta["air_temp_c"],
             "utci_sun_c": r.utci_sun_c,
+            "experienced_utci_c": round(r.experienced_utci_c, 2),
             "heat_load": round(r.heat_load_total, 2),
             "severe": round(r.severe_total, 2),
         }
@@ -358,12 +389,18 @@ class Adapter:
     """Places interventions and measures what they buy."""
 
     def _unit_points(self, log: list[dict]) -> list[dict]:
-        """One record per purchased unit, at a real coordinate.
+        """One record per purchased unit, on a real candidate site.
 
-        The map must not infer where a unit went from an aggregate. A tree
-        gets a distinct point sampled along its segment - several trees on one
-        segment must not stack on the same pixel - and a shelter gets the
-        validated coordinate of the stop it protects.
+        A placement is a point on the ground, not a highlighted street. Trees
+        take the next free site on their segment's candidate layer - sites are
+        generated every SITE_SPACING_M metres along the centreline, so two
+        trees on one street component are always at least that far apart and
+        the row spreads across the segment instead of stacking on a pixel.
+        A shelter takes the validated coordinate of the unsheltered stop it
+        protects.
+
+        The old rule placed unit n at the fraction (n + 0.5) / capacity, which
+        made spacing depend on how many were bought rather than on the ground.
         """
         used: dict[str, int] = {}
         out: list[dict] = []
@@ -377,44 +414,119 @@ class Adapter:
                 stop = next((s for s in self.e.stops
                              if s["seg_id"] == sid and not s["sheltered"]), None)
                 if stop:
-                    lon, lat, stop_id = stop["lon"], stop["lat"], stop["stop_name"]
+                    lon, lat = stop["lon"], stop["lat"]
+                    stop_id = stop["stop_name"]
+                    bearing = self._bearing_at(coords, self._length_m(coords) / 2)
                 else:
-                    lon, lat, stop_id = (*self._along(coords, 0.5), None)
+                    lon, lat, bearing = self._along_m(
+                        coords, self._length_m(coords) / 2)
+                    stop_id = None
+                site_id = f"{sid}-stop"
             else:
-                # Spread trees along the segment rather than at its midpoint.
-                cap = max(1, int(self.max_units("tree")[self.e.index[sid]]))
-                frac = (n + 0.5) / max(cap, n + 1)
-                lon, lat = self._along(coords, min(0.95, max(0.05, frac)))
+                # The nth site on this segment's candidate layer. Which
+                # coordinate that is was decided once, by spacing on the
+                # ground - not by how many units happened to be bought.
+                sites = self.sites.get(sid) or []
+                if n < len(sites):
+                    lon, lat, bearing = sites[n]
+                else:
+                    lon, lat, bearing = self._along_m(
+                        coords, self._length_m(coords) / 2)
                 stop_id = None
+                site_id = f"{sid}-s{n:02d}"
 
             out.append({
                 "unitId": f"{entry['kind']}-{sid}-{n}",
+                "siteId": site_id,
                 "kind": entry["kind"], "segmentId": sid, "stopId": stop_id,
                 "lon": round(lon, 6), "lat": round(lat, 6),
+                "bearing_deg": round(bearing, 1),
                 "costUsd": entry["cost_usd"], "order": order,
                 "phase": entry.get("phase", "marginal"),
             })
         return out
 
+    def shade_footprints(self, units: list[dict]) -> dict:
+        """The ground each purchased unit actually shades.
+
+        The map used to bloom a fixed circle, which is decoration. This is the
+        modelled footprint: a tree shades SHADE_M of footway along the
+        centreline across a crown's width; a shelter roof covers its stop.
+        Both are returned by the engine so the UI never invents geometry.
+        """
+        feats = []
+        for u in units:
+            spec = self.interventions[u["kind"]]
+            along = float(spec["shade_m"])
+            across = 8.0 if u["kind"] == "tree" else 3.0
+            feats.append({
+                "type": "Feature",
+                "properties": {"unitId": u["unitId"], "siteId": u["siteId"],
+                               "kind": u["kind"], "order": u["order"],
+                               "along_m": along, "across_m": across},
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [self._rect(u["lon"], u["lat"],
+                                               u["bearing_deg"], along, across)],
+                },
+            })
+        return {"type": "FeatureCollection", "features": feats}
+
     @staticmethod
-    def _along(coords: list, frac: float) -> tuple[float, float]:
-        """Point at `frac` along a LineString, by segment length."""
+    def _rect(lon: float, lat: float, bearing_deg: float,
+              along_m: float, across_m: float) -> list:
+        """An oriented rectangle around a point, closed, in lon/lat."""
+        import math
+        th = math.radians(bearing_deg)
+        ux, uy = math.cos(th), math.sin(th)          # along the street
+        vx, vy = -uy, ux                             # across it
+        a, b = along_m / 2.0, across_m / 2.0
+        ring = []
+        for sa, sb in ((1, 1), (1, -1), (-1, -1), (-1, 1), (1, 1)):
+            dx = sa * a * ux + sb * b * vx
+            dy = sa * a * uy + sb * b * vy
+            ring.append([round(lon + dx / _M_PER_DEG_LON, 6),
+                         round(lat + dy / _M_PER_DEG_LAT, 6)])
+        return ring
+
+    @staticmethod
+    def _seg_lengths_m(coords: list) -> list[float]:
+        out = []
+        for i in range(1, len(coords)):
+            dx = (coords[i][0] - coords[i - 1][0]) * _M_PER_DEG_LON
+            dy = (coords[i][1] - coords[i - 1][1]) * _M_PER_DEG_LAT
+            out.append((dx * dx + dy * dy) ** 0.5)
+        return out
+
+    @classmethod
+    def _length_m(cls, coords: list) -> float:
+        return sum(cls._seg_lengths_m(coords)) if len(coords) > 1 else 0.0
+
+    @classmethod
+    def _along_m(cls, coords: list, metres: float) -> tuple[float, float, float]:
+        """Point `metres` along a LineString, plus the local bearing there."""
+        import math
         if not coords:
-            return (0.0, 0.0)
+            return (0.0, 0.0, 0.0)
         if len(coords) == 1:
-            return (coords[0][0], coords[0][1])
-        segs = [((coords[i][0] - coords[i - 1][0]) ** 2
-                 + (coords[i][1] - coords[i - 1][1]) ** 2) ** 0.5
-                for i in range(1, len(coords))]
-        total = sum(segs) or 1.0
-        target, acc = frac * total, 0.0
+            return (coords[0][0], coords[0][1], 0.0)
+        segs = cls._seg_lengths_m(coords)
+        acc = 0.0
         for i, d in enumerate(segs):
-            if acc + d >= target:
-                t = (target - acc) / d if d else 0.0
+            if acc + d >= metres or i == len(segs) - 1:
+                t = (metres - acc) / d if d else 0.0
+                t = min(max(t, 0.0), 1.0)
                 a, b = coords[i], coords[i + 1]
-                return (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
+                dx = (b[0] - a[0]) * _M_PER_DEG_LON
+                dy = (b[1] - a[1]) * _M_PER_DEG_LAT
+                return (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t,
+                        math.degrees(math.atan2(dy, dx)))
             acc += d
-        return (coords[-1][0], coords[-1][1])
+        return (coords[-1][0], coords[-1][1], 0.0)
+
+    @classmethod
+    def _bearing_at(cls, coords: list, metres: float) -> float:
+        return cls._along_m(coords, metres)[2] if len(coords) > 1 else 0.0
 
     def _rank_trace(self, log, placed, kinds, hi, minutes, waiting,
                     budget_usd, spent) -> dict:
@@ -442,7 +554,7 @@ class Adapter:
         for k in kinds:
             if by_kind.get(k, {}).get("units"):
                 continue
-            spec = INTERVENTIONS[k]
+            spec = self.interventions[k]
             reach = ("waiting time at transit stops"
                      if spec.get("protects") == "waiting" else "footway")
             unbought.append({
@@ -478,6 +590,59 @@ class Adapter:
     def __init__(self, engine: Engine, lengths: np.ndarray):
         self.e = engine
         self.lengths = lengths.astype(np.float64)
+        # Per-instance, not the module dict: a custom solution registered for
+        # one request must never leak into the next one's built-ins.
+        self.interventions = {k: dict(v) for k, v in INTERVENTIONS.items()}
+        self.sites = {sid: self._candidate_sites(coords)
+                      for sid, coords in self.e.seg_coords.items()}
+        self._tree_capacity = np.array(
+            [len(self.sites.get(sid, ())) for sid in self.e.seg_ids], dtype=int)
+
+    @classmethod
+    def _candidate_sites(cls, coords: list) -> list[tuple[float, float, float]]:
+        """The planting sites on one segment: lon, lat and street bearing.
+
+        Sites are walked along the centreline and kept only when they are at
+        least SITE_SPACING_M from the previous kept site *in a straight line*.
+        Measuring along the polyline is not enough - on a curved street two
+        points 10 m apart along the kerb can be 7.8 m apart on the ground,
+        which would let two purchased crowns overlap and double-count the
+        person-minutes underneath them.
+        """
+        total = cls._length_m(coords)
+        if total < SITE_SPACING_M:
+            return []
+        out: list[tuple[float, float, float]] = []
+        step = 2.0
+        d = step
+        while d <= total - step:
+            lon, lat, bearing = cls._along_m(coords, d)
+            if not out:
+                out.append((lon, lat, bearing))
+            else:
+                plon, plat, _ = out[-1]
+                dx = (lon - plon) * _M_PER_DEG_LON
+                dy = (lat - plat) * _M_PER_DEG_LAT
+                if (dx * dx + dy * dy) ** 0.5 >= SITE_SPACING_M:
+                    out.append((lon, lat, bearing))
+            d += step
+        return out
+
+    def register(self, spec: dict) -> str:
+        """Add a user-confirmed custom solution for this Adapter only.
+
+        The spec must already have passed the mechanism gate: by the time it
+        arrives here it is numbers, not prose. The language model never
+        reaches this function - a person confirms the draft first.
+        """
+        key = str(spec["key"])
+        if key in INTERVENTIONS:
+            raise ValueError(f"'{key}' is a built-in; choose another name")
+        for field in ("label", "cost_usd", "shade_m", "block"):
+            if field not in spec:
+                raise ValueError(f"custom solution is missing '{field}'")
+        self.interventions[key] = dict(spec)
+        return key
 
     def max_units(self, kind: str) -> np.ndarray:
         """How many units a segment can take.
@@ -486,10 +651,13 @@ class Adapter:
         is. A shelter is limited by how many real unsheltered bus stops are
         on it, which is usually one or two.
         """
-        spec = INTERVENTIONS[kind]
+        spec = self.interventions[kind]
         if spec.get("site_constrained"):
             return self.e.shelter_capacity.astype(int)
-        return np.floor(self.lengths / spec["shade_m"]).astype(int)
+        # How many sites the candidate layer actually generated on each
+        # segment. Spacing on the ground, not crown width and not a length
+        # division, is what limits how many trees a street can take.
+        return self._tree_capacity
 
     def shelter_delta(self, units: np.ndarray) -> np.ndarray:
         """Extra shelter coverage from placing `units` shelters per segment."""
@@ -500,7 +668,7 @@ class Adapter:
     def sun_delta(self, kind: str, units: np.ndarray, hour_idx: int) -> np.ndarray:
         """Footway sun removed by `units` of this kind. Shelters remove none:
         they cover the stop, not the pavement people walk along."""
-        spec = INTERVENTIONS[kind]
+        spec = self.interventions[kind]
         if spec.get("protects") == "waiting":
             return np.zeros(len(self.lengths))
         covered = np.clip(units * spec["shade_m"] / np.maximum(self.lengths, 1e-6),
@@ -567,7 +735,7 @@ class Adapter:
         # would be refused as a mismatch.
         plan_hash = self.e.input_hash(scenario, hour, persona, budget_usd,
                                       (kinds or []) + [f"policy:{policy}"])
-        kinds = kinds or list(INTERVENTIONS)
+        kinds = kinds or list(self.interventions)
         hi = self.e.hour_index(hour)
         p = self.e.persona_index(persona)
         cond = self.e.conditions(scenario, hour)
@@ -609,7 +777,7 @@ class Adapter:
 
         # --- Phase A: the transparent service floor -----------------------
         if policy == "balanced_protection" and "shaded_shelter" in kinds:
-            cost = INTERVENTIONS["shaded_shelter"]["cost_usd"]
+            cost = self.interventions["shaded_shelter"]["cost_usd"]
             base_sev, base_load = score(sun0, cover0)
             for sid, i in self.service_floor(hour, persona):
                 if spent + cost > budget_usd or placed["shaded_shelter"][i] >= caps["shaded_shelter"][i]:
@@ -640,7 +808,7 @@ class Adapter:
         while True:
             best = None
             for k in kinds:
-                spec = INTERVENTIONS[k]
+                spec = self.interventions[k]
                 if spent + spec["cost_usd"] > budget_usd:
                     continue
                 live = (live_wait if spec.get("protects") == "waiting"
@@ -683,6 +851,7 @@ class Adapter:
         after = self.e.crash_test(scenario, hour, persona,
                                   sun_delta=total_delta,
                                   shelter_delta=cover_delta)
+        units = self._unit_points(log)
         denom = base.severe_total or base.heat_load_total or 1.0
         num = ((base.severe_total - after.severe_total) if base.severe_total
                else (base.heat_load_total - after.heat_load_total))
@@ -706,7 +875,8 @@ class Adapter:
             "after_sun": cur_sun,
             "after_utci_c": (cur_sun * u_sun + (1.0 - cur_sun) * u_shade),
             "after_shelter_coverage": cur_cover,
-            "unit_placements": self._unit_points(log),
+            "unit_placements": units,
+            "shade_footprints": self.shade_footprints(units),
             "rank_trace": self._rank_trace(log, placed, kinds, hi, minutes,
                                            waiting, budget_usd, spent),
             "input_hash": plan_hash,

@@ -7,6 +7,7 @@ import AdjustModal from "@/components/AdjustModal";
 import CrashButton from "@/components/CrashButton";
 import ResultCard from "@/components/ResultCard";
 import SetupCard from "@/components/SetupCard";
+import SolutionLab from "@/components/SolutionLab";
 import SourcesDrawer from "@/components/SourcesDrawer";
 import StageOverlay from "@/components/StageOverlay";
 import type { Layers } from "@/components/SetupCard";
@@ -15,9 +16,9 @@ import {
   ADAPT_STAGES, CRASH_STAGES, headlineFor, prefersReducedMotion, runStages,
 } from "@/lib/reveal";
 import type { AdaptStage, CrashStage } from "@/lib/reveal";
-import { canShowPeople, isReady } from "@/lib/types";
+import { isReady } from "@/lib/types";
 import type {
-  AdaptResult, CrashResult, Hour, Meta, Selection, SourceMode,
+  AdaptResult, CrashResult, Meta, Selection, SourceMode,
 } from "@/lib/types";
 
 const MapView = dynamic(() => import("@/components/MapView"), { ssr: false });
@@ -48,6 +49,7 @@ export default function Page() {
   const [seqProgress, setSeqProgress] = useState(0);
   const [showAdjust, setShowAdjust] = useState(false);
   const [sources, setSources] = useState<string | null>(null);
+  const [lab, setLab] = useState(false);
   const reveal = useRef<{ skip: () => void; cancel: () => void } | null>(null);
   const resetMap = useRef<(() => void) | null>(null);
 
@@ -146,7 +148,7 @@ export default function Page() {
     setBusy(false);
     setCrashStage("idle"); setAdaptStage("idle");
     setStageProgress(0); setSeqProgress(0);
-    setShowAdjust(false); setSources(null);
+    setShowAdjust(false); setSources(null); setLab(false);
     setLayers(NO_LAYERS);
     resetMap.current?.();
   }, []);
@@ -290,7 +292,7 @@ export default function Page() {
 
         {/* Clear of the map's own zoom controls, which live bottom-right. */}
         {showResult && result && (
-          <div className="pointer-events-none absolute bottom-24 right-4 rounded-xl
+          <div className="pointer-events-none absolute bottom-6 left-[352px] rounded-xl
             border border-slate-200 bg-white/95 px-3 py-2 shadow backdrop-blur">
             <div className="flex items-center gap-2">
               <div className="relative h-2.5 w-44 rounded-full"
@@ -327,8 +329,11 @@ export default function Page() {
           meta={meta} sel={sel} onChange={patch}
           onRun={runAdapt} onClose={() => setShowAdjust(false)}
           cachedOnly={mode === "fallback"}
+          onOpenLab={() => { setShowAdjust(false); setLab(true); }}
         />
       )}
+
+      {lab && <SolutionLab sel={sel} onClose={() => setLab(false)} />}
 
       {sources && (
         <SourcesDrawer

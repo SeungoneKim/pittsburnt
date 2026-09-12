@@ -6,7 +6,8 @@ export PYTHONPATH := pipeline:api
 # already satisfied.
 .PHONY: help api web run \
         step1 step2 step3 step4 step5 step6 step7 step7b step8 pipeline \
-        verify test-engine check-determinism inspect check clean-cache
+        verify test-engine check-determinism inspect check clean-cache \
+        gates
 
 help:
 	@echo "Run the demo"
@@ -19,6 +20,7 @@ help:
 	@echo "  make test-engine       - engine property tests"
 	@echo "  make check-determinism - same seed reproduces the same trips"
 	@echo "  make inspect           - visual QA map of the pipeline geometry"
+	@echo "  make gates             - browser release gates (needs api + web up)"
 	@echo ""
 	@echo "Rebuild the data (each step caches; run only what you need)"
 	@echo "  make step1  walk graph -> corridor-labelled segments"
@@ -66,3 +68,10 @@ check-determinism:
 
 clean-cache:
 	rm -f data/cache/segments.geojson data/cache/edge_segments.json data/cache/inspect.html
+
+# Browser release gates. Needs `make api` and `make web` already running:
+# they assert the six judge-facing moments, the reset contract and the
+# responsive gate against a real render, which no unit test can do.
+gates:
+	node tests/release_gates.mjs
+	node tests/solution_lab_gate.mjs

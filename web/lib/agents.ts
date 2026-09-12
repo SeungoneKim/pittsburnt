@@ -25,17 +25,24 @@ export interface AgentRoute {
 }
 
 /**
- * One declared multiplier for every persona.
+ * One declared time-compression factor for every persona.
  *
  * Simulation truth stays in metres and seconds: a route's playback duration
  * comes from its real walking minutes, so a mobility-constrained walker at
  * 0.80 m/s visibly takes longer over the same ground than a student at
- * 1.30 m/s. Giving every agent a fixed 14-second loop - as the previous
+ * 1.30 m/s. Giving every agent a fixed 14-second loop - as an earlier
  * version did - erased the one property the persona control exists to show.
  *
- * Zoom changes pixels per metre only. It never changes ground speed.
+ * 15x, not the 90x of 2.5. At 90x a 150 m route finished in under two
+ * seconds for every cohort, which is too fast to read as motion at all; at
+ * 15x the same 150 m takes an Older Adult 11.1 s and a Student 7.7 s, and
+ * the difference is visible without being told about it.
+ *
+ * Zoom changes pixels per metre only. It never changes ground speed, and
+ * this factor changes display time only - every exposure calculation still
+ * uses physical minutes.
  */
-export const PLAYBACK_MULTIPLIER = 90;
+export const DEMO_TIME_COMPRESSION = 15;
 
 export interface AgentState {
   lon: number;
@@ -48,8 +55,15 @@ export interface AgentState {
 /** How many agents to show. The spec asks for 40-60 from the active cohort. */
 export const AGENT_COUNT = 50;
 
-function visualDuration(minutes: number): number {
-  return Math.max(2000, (minutes * 60_000) / PLAYBACK_MULTIPLIER);
+/**
+ * Playback duration for one route.
+ *
+ * No floor. The 2-second minimum this used to carry made every short route
+ * look equally fast regardless of who was walking it, which is precisely the
+ * comparison the persona control exists to make.
+ */
+export function visualDuration(minutes: number): number {
+  return (minutes * 60_000) / DEMO_TIME_COMPRESSION;
 }
 
 function cumulative(coords: [number, number][]): number[] {
@@ -109,7 +123,7 @@ export function progressAt(r: AgentRoute, nowMs: number): number {
 
 /** Where an agent is, and how hot it is there, at progress `u` in [0, 1]. */
 export function sampleRoute(
-  r: AgentRoute, u: number, res: CrashResult, severeThreshold: number,
+  r: AgentRoute, u: number, res: CrashResult,
 ): AgentState {
   const clamped = Math.min(Math.max(u, 0), 1);
   let i = 1;

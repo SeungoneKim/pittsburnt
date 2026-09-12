@@ -1,6 +1,9 @@
 "use client";
 
+import Panel from "@/components/Panel";
 import ThreeState from "@/components/ThreeState";
+import { STATUS_ABBR, STATUS_STYLE } from "@/lib/provenance";
+import type { ValueStatus } from "@/lib/provenance";
 import type { AdaptResult, CrashResult, Meta, Selection } from "@/lib/types";
 
 const fmt = (n: number) => Math.round(n).toLocaleString();
@@ -34,39 +37,40 @@ export default function ResultCard({
   const sunBand = band(result.utci_sun_c);
 
   return (
-    <div className="pointer-events-auto w-[404px] overflow-hidden rounded-3xl
-      border border-white/70 bg-white/92 shadow-2xl shadow-slate-900/10
-      backdrop-blur-md">
-      <div className="max-h-[calc(100dvh-150px)] overflow-y-auto p-5">
+    <Panel title="Result" icon="📊" width={356} tone="result">
+      <div className="max-h-[calc(100dvh-160px)] overflow-y-auto px-4 pb-4 pt-1">
         <ThreeState meta={meta} sel={sel} result={result} adapted={adapted} />
 
         <div className="mt-3 flex items-center gap-2 border-t border-slate-200/80 pt-3">
-          <span className={`text-[13px] font-semibold ${sunBand.cls}`}>
+          <span className={`text-[14px] font-semibold ${sunBand.cls}`}>
             {sunBand.label} in sun
           </span>
-          <span className="text-[12px] text-slate-500">
+          <span className="text-[12.5px] text-slate-500">
             · shade {result.utci_shade_c.toFixed(1)} °C
             ({result.conditions.shade_relief_c.toFixed(1)} °C cooler)
           </span>
-          <button
-            onClick={() => onOpenSources("utci_c")}
-            title="Open the source for this value"
-            className="ml-auto rounded bg-slate-100 px-1.5 py-0.5 text-[9px]
-              font-semibold uppercase tracking-wide text-slate-600 hover:bg-slate-200"
-          >
-            com
-          </button>
+          <span className="ml-auto flex gap-1">
+            <Badge status="computed" dataKey="utci_c"
+              label="UTCI is computed" onOpen={onOpenSources} />
+            <Badge status="source" dataKey="air_temp_c"
+              label="Air temperature is sourced" onOpen={onOpenSources} />
+          </span>
         </div>
 
         {adapted ? (
           <div className="mt-3 rounded-2xl bg-emerald-50/80 p-3.5">
             <div className="flex items-baseline gap-2">
-              <span className="text-[20px] font-extrabold tracking-tight text-emerald-900">
+              <span className="text-[22px] font-extrabold tracking-tight text-emerald-900">
                 ${fmt(adapted.spent_usd)}
               </span>
               <span className="text-[12px] font-semibold uppercase tracking-wide
                 text-emerald-800">
                 {adapted.policy_label}
+              </span>
+              <span className="ml-auto">
+                <Badge status="assumption" dataKey="limits"
+                  label="Unit costs are planning assumptions"
+                  onOpen={onOpenSources} />
               </span>
             </div>
             <div className="mt-2 space-y-1">
@@ -118,7 +122,7 @@ export default function ResultCard({
 
         {topHotspot && (
           <div className="mt-3 border-t border-slate-200/80 pt-3">
-            <div className="text-[10px] uppercase tracking-wider text-slate-500">
+            <div className="text-[11px] uppercase tracking-wider text-slate-500">
               Most exposed street
             </div>
             <div className="flex items-baseline justify-between gap-2">
@@ -147,7 +151,33 @@ export default function ResultCard({
           {result.snapshot_id}
         </button>
       </div>
-    </div>
+    </Panel>
+  );
+}
+
+/**
+ * A provenance mark that is a control, not a tooltip.
+ *
+ * Clicking opens Sources at the matching entry, which scrolls it into view,
+ * focuses it and highlights it for 1.5 s. A badge that only had a `title`
+ * attribute could not be reached by keyboard or by touch at all.
+ */
+export function Badge({ status, dataKey, onOpen, label }: {
+  status: ValueStatus; dataKey: string; label: string;
+  onOpen: (k: string) => void;
+}) {
+  return (
+    <button
+      onClick={() => onOpen(dataKey)}
+      aria-label={`${label}: open the source for this value`}
+      title={`${label} — open the source`}
+      className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase
+        tracking-wide transition hover:brightness-95
+        focus:outline-none focus:ring-2 focus:ring-amber-400
+        ${STATUS_STYLE[status]}`}
+    >
+      {STATUS_ABBR[status]}
+    </button>
   );
 }
 
@@ -186,7 +216,7 @@ function PlanRow({ kind, value, label }: {
   return (
     <div className="flex items-baseline gap-2">
       <span className="w-5 shrink-0 self-center"><Mark kind={kind} /></span>
-      <span className="text-[16px] font-bold tabular-nums text-emerald-900">
+      <span className="text-[17px] font-bold tabular-nums text-emerald-900">
         {value}
       </span>
       <span className="text-[12px] uppercase tracking-wide text-emerald-900/70">

@@ -13,7 +13,7 @@ import type { Meta, Selection } from "@/lib/types";
  * to answer it before they know what the problem is.
  */
 export default function AdjustModal({
-  meta, sel, onChange, onRun, onClose, cachedOnly,
+  meta, sel, onChange, onRun, onClose, cachedOnly, onOpenLab,
 }: {
   meta: Meta;
   sel: Selection;
@@ -21,6 +21,7 @@ export default function AdjustModal({
   onRun: () => void;
   onClose: () => void;
   cachedOnly: boolean;
+  onOpenLab: () => void;
 }) {
   const [text, setText] = useState(formatBudget(sel.budget));
   const [error, setError] = useState<string | null>(null);
@@ -114,6 +115,26 @@ export default function AdjustModal({
           A policy choice, not an unconstrained discovery — waiting is a small
           share of exposure, so pure efficiency never protects a waiting rider.
         </p>
+
+        {/* The two built-ins are the demo. A custom solution is a Beta side
+            door: it never blocks, and never changes, the main loop. */}
+        <button
+          onClick={onOpenLab}
+          className="mt-4 w-full rounded-xl border border-violet-200
+            bg-violet-50 px-3 py-2 text-left transition hover:border-violet-400"
+        >
+          <span className="text-[13px] font-semibold text-violet-900">
+            Add a solution
+            <span className="ml-1.5 rounded bg-violet-200 px-1 py-0.5
+              text-[9px] font-bold uppercase tracking-wide text-violet-900">
+              Beta
+            </span>
+          </span>
+          <span className="block text-[11.5px] leading-snug text-violet-900/70">
+            Research a measure with Gemini, then let the engine decide whether
+            it can honestly be simulated.
+          </span>
+        </button>
 
         <button
           onClick={() => { if (commit() !== null) onRun(); }}
