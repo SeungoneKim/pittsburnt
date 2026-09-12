@@ -10,7 +10,7 @@ interface Props {
   onChange: (patch: Partial<Selection>) => void;
   layers: {
     shadow: boolean; canopy: boolean; trees: boolean;
-    stops: boolean; buildings: boolean; trips: boolean;
+    buildings: boolean; trips: boolean;
   };
   onLayers: (patch: Partial<Props["layers"]>) => void;
   mode: SourceMode;
@@ -111,7 +111,6 @@ export default function ControlPanel({
             ["shadow", "Building shade"],
             ["canopy", "Tree canopy"],
             ["trees", "City trees"],
-            ["stops", "Bus stops"],
             ["buildings", "Buildings"],
             ["trips", "Walking routes"],
           ] as const).map(([key, label]) => (
@@ -196,13 +195,7 @@ export default function ControlPanel({
           {sel.variant !== "all" && meta.interventions[sel.variant] && (
             <p className="mt-1.5 text-[11px] text-slate-500">
               ${meta.interventions[sel.variant].cost_usd.toLocaleString()} each ·
-              shades ~{meta.interventions[sel.variant].shade_m} m
-              {meta.interventions[sel.variant].site_constrained && meta.shelter_sites && (
-                <span className="text-amber-700">
-                  {" "}· only {meta.shelter_sites.total_sites} real unsheltered
-                  stops are eligible
-                </span>
-              )}
+              shades ~{meta.interventions[sel.variant].shade_m} m of footway
             </p>
           )}
         </div>

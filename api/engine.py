@@ -79,12 +79,6 @@ class Engine:
         if [str(s) for s in mins["seg_ids"]] != self.seg_ids:
             raise ValueError("minutes.npz and sun_exposure.npz disagree on segments")
 
-        # Real unsheltered bus stops per segment - the candidate sites for
-        # the shelter intervention.
-        sites_path = cache / "shelter_sites.json"
-        self.shelter_sites: dict[str, int] = (
-            json.loads(sites_path.read_text())["sites"] if sites_path.exists() else {})
-
         self.scenarios = json.loads((cache / "scenarios.json").read_text())
         self.trip_meta = json.loads((cache / "trips_meta.json").read_text())
         self.weights = {p["persona"]: float(p["planning_weight"])
@@ -168,21 +162,6 @@ INTERVENTIONS = {
         "shade_m": 15.0,
         "block": 0.95,   # solid canopy
     },
-    "transit_shelter": {
-        "label": "Bus shelter",
-        # Pittsburgh DOMI's Transit Stop Improvement Program installs
-        # shelters at high-ridership stops explicitly to give riders shade.
-        # No per-shelter figure is published for that programme; this sits
-        # inside the $9k-$30k industry range and is surfaced as an
-        # assumption, not quoted as a procurement price.
-        "cost_usd": 15000,
-        "shade_m": 4.0,   # a shelter is roughly 4 m of covered pavement
-        "block": 0.95,
-        # Unlike a tree, a shelter can only go where a bus stop already is,
-        # so capacity comes from the real stop inventory rather than from
-        # how long the segment happens to be.
-        "site_constrained": True,
-    },
 }
 
 
@@ -200,17 +179,8 @@ class Adapter:
         self.lengths = lengths.astype(np.float64)
 
     def max_units(self, kind: str) -> np.ndarray:
-        """How many units a segment can take.
-
-        Shade you build yourself is limited by how long the segment is. A bus
-        shelter is limited by how many unsheltered bus stops are actually on
-        it, which is usually one or two.
-        """
+        """You cannot fit more shade on a segment than the segment is long."""
         spec = INTERVENTIONS[kind]
-        if spec.get("site_constrained"):
-            sites = self.e.shelter_sites
-            return np.array([int(sites.get(sid, 0)) for sid in self.e.seg_ids],
-                            dtype=int)
         return np.floor(self.lengths / spec["shade_m"]).astype(int)
 
     def sun_delta(self, kind: str, units: np.ndarray, hour_idx: int) -> np.ndarray:

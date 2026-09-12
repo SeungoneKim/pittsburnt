@@ -30,8 +30,7 @@ export default function Page() {
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<SourceMode>("live");
   const [layers, setLayers] = useState({
-    shadow: false, canopy: false, trees: false, stops: false,
-    buildings: false, trips: false,
+    shadow: false, canopy: false, trees: false, buildings: false, trips: false,
   });
   const [corridors, setCorridors] = useState<Record<string, string | null>>({});
 
@@ -83,7 +82,7 @@ export default function Page() {
     setResult(null);
     setAdapted(null);
     setError(null);
-    setLayers({ shadow: false, canopy: false, trees: false, stops: false,
+    setLayers({ shadow: false, canopy: false, trees: false,
       buildings: false, trips: false });
   }, []);
 

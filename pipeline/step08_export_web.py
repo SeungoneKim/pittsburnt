@@ -36,7 +36,6 @@ VARIANTS: dict[str, list[str] | None] = {
     "all": None,
     "tree": ["tree"],
     "shade_structure": ["shade_structure"],
-    "transit_shelter": ["transit_shelter"],
 }
 # Coordinate precision: ~1 m at this latitude, and it roughly halves the file.
 COORD_DP = 5
@@ -75,7 +74,6 @@ def main() -> None:
 
     for name, src, simp in [("trips", "trips.geojson", 0.00002),
                             ("trees", "trees.geojson", 0.0),
-                            ("bus_stops", "bus_stops.geojson", 0.0),
                             ("buildings", "buildings.geojson", 0.00003)]:
         path = CACHE / src
         if not path.exists():
@@ -199,11 +197,9 @@ def main() -> None:
         "budgets": FALLBACK_BUDGETS,
         "interventions": {k: {"label": v["label"], "cost_usd": v["cost_usd"],
                               "shade_m": v["shade_m"],
-                              "site_constrained": bool(v.get("site_constrained"))}
+                              }
                           for k, v in INTERVENTIONS.items()},
         "variants": list(VARIANTS),
-        "shelter_sites": json.loads((CACHE / "shelter_sites.json").read_text())
-                         if (CACHE / "shelter_sites.json").exists() else None,
         "personas": [{"key": p["persona"], "label": p["label"],
                       "speed_mps": p["speed_mps"],
                       "planning_weight": p["planning_weight"],

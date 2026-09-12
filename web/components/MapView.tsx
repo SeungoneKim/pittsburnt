@@ -74,7 +74,7 @@ interface Props {
   hour: Hour;
   layers: {
     shadow: boolean; canopy: boolean; trees: boolean;
-    stops: boolean; buildings: boolean; trips: boolean;
+    buildings: boolean; trips: boolean;
   };
   onSegmentClick?: (segId: string, index: number) => void;
 }
@@ -159,23 +159,6 @@ export default function MapView({
           });
         }
 
-        const stops = await fetch("/data/bus_stops.geojson")
-          .then((r) => r.json()).catch(() => null);
-        if (stops) {
-          m.addSource("stops", { type: "geojson", data: stops });
-          m.addLayer({
-            id: "stops", type: "circle", source: "stops",
-            layout: { visibility: "none" },
-            paint: {
-              // Filled = already sheltered; hollow = a candidate site.
-              "circle-radius": ["interpolate", ["linear"], ["zoom"], 13, 3, 17, 7],
-              "circle-color": ["case", ["get", "sheltered"], "#2f6fb3", "#ffffff"],
-              "circle-stroke-color": "#2f6fb3",
-              "circle-stroke-width": 1.6,
-              "circle-opacity": 0.9,
-            },
-          });
-        }
 
       m.addSource("trees", { type: "geojson", data: trees });
         m.addLayer({
@@ -335,7 +318,6 @@ export default function MapView({
     set("buildings", layers.buildings);
     set("canopy", layers.canopy);
     set("trees", layers.trees);
-    set("stops", layers.stops);
     set("trips", layers.trips);
     for (const h of meta.hours) set(`shadow-${h}`, layers.shadow && h === hour);
   }, [layers, hour, meta.hours]);
