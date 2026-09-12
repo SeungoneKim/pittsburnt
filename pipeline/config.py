@@ -12,6 +12,12 @@ ROOT = Path(__file__).resolve().parent.parent
 CACHE = ROOT / "data" / "cache"
 RAW = ROOT / "data" / "raw"
 
+# Keep OSMnx's raw Overpass responses out of the repo root and out of git;
+# the cached .graphml files are the reproducible artifact, not these.
+import osmnx as _ox  # noqa: E402
+_ox.settings.cache_folder = str(RAW / "osm_cache")
+_ox.settings.use_cache = True
+
 # --- Scope -----------------------------------------------------------------
 # Oakland, Pittsburgh. Covers the Forbes / Fifth / Craig demo corridors plus
 # enough surrounding grid that synthetic trips have somewhere to go.
