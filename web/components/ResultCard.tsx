@@ -102,7 +102,9 @@ export default function ResultCard({
                   <PlanRow key={k}
                     kind={k}
                     value={String(n)}
-                    label={meta.interventions[k]?.label ?? k} />
+                    label={meta.interventions[k]?.label
+                      ?? (adapted.custom?.key === k
+                        ? adapted.custom.label : k.replace(/_/g, " "))} />
                 ))}
               <PlanRow kind="money"
                 value={efficiency(adapted)}
@@ -229,6 +231,16 @@ export function Badge({ status, dataKey, onOpen, label }: {
 /** Small inline marks that match the map sprites, drawn as SVG so they look
  *  the same on every machine. */
 function Mark({ kind }: { kind: string }) {
+  // A measure someone added is neither a tree nor a shelter, and drawing it
+  // as one would misreport the plan. It gets the Beta panel's violet sail.
+  if (kind.startsWith("custom_")) {
+    return (
+      <svg viewBox="0 0 20 20" className="h-4 w-4" aria-hidden>
+        <path d="M3 9 Q10 3 17 9 Q10 7 3 9 Z" fill="#8b5cf6" />
+        <path d="M4 9v8M16 9v8" stroke="#5b21b6" strokeWidth="1.8" />
+      </svg>
+    );
+  }
   if (kind === "shaded_shelter") {
     return (
       <svg viewBox="0 0 20 20" className="h-4 w-4" aria-hidden>

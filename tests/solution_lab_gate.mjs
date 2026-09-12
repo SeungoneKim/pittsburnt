@@ -20,11 +20,36 @@ console.log('gate verdicts:', want.map(s => `${s}:${t.includes(s)}`).join('  '))
 if (want.some(s => !t.includes(s))) { console.error('FAIL: a verdict is missing'); process.exitCode = 1; }
 await p.screenshot({ path: `${OUT}/v26_6_lab.png` });
 await p.locator('button', { hasText: 'Confirm these numbers and simulate' }).click();
-await p.waitForTimeout(2500);
+await p.waitForFunction(() => /simulated two ways/i.test(
+  document.querySelector('aside')?.innerText ?? ''), null, { timeout: 60000 });
 const t2 = await p.locator('aside').innerText();
-console.log('simulated:', /priced against the built-ins/.test(t2));
-if (!/priced against the built-ins/.test(t2)) process.exitCode = 1;
-console.log('engine owns the numbers:', /Experienced UTCI/.test(t2) && /37\.79/.test(t2));
+console.log('simulated two ways:', /simulated two ways/i.test(t2));
+
+// The measure works on its own AND loses to a cheaper tree. Both halves are
+// the point: a custom solution that is never bought is a finding.
+const solo = /On its own[\s\S]{0,120}?(\d+) units built/i.exec(t2);
+console.log('built on its own:', solo ? `${solo[1]} units` : 'MISSING');
+if (!solo || Number(solo[1]) < 1) process.exitCode = 1;
+console.log('reports why it loses to a tree:',
+  /removed more severe minutes per dollar|costs \$/i.test(t2));
+
+// And the plan reaches the map with its own mark, not a tree's.
+await p.locator('aside button', { hasText: 'Close' }).click();
+await p.waitForTimeout(11000);
+const ms = await p.evaluate(() => window.__mapState?.() ?? null);
+console.log('drawn on the map:', ms && ms.dynamicSourceFeatureCount > 100,
+  JSON.stringify(ms));
+if (!ms || ms.dynamicSourceFeatureCount <= 100) process.exitCode = 1;
+const sprites = await p.evaluate(() => {
+  const src = window.__map.getSource('placed');
+  const d = src && src._data;
+  return [...new Set((d?.features ?? []).map(f => f.properties.sprite))];
+});
+console.log('unit sprite:', sprites);
+if (!sprites.includes('pb-custom')) process.exitCode = 1;
+const body = await p.locator('body').innerText();
+console.log('result card names the custom solution:',
+  /shade sail/i.test(body));
 await p.screenshot({ path: `${OUT}/v26_7_lab_sim.png` });
 console.log('errors:', errs.length ? errs.slice(0,2) : 'none');
 if (errs.length) process.exitCode = 1;

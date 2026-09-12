@@ -13,7 +13,6 @@ import SourcesDrawer from "@/components/SourcesDrawer";
 import StageOverlay from "@/components/StageOverlay";
 import type { Layers } from "@/components/SetupCard";
 import { adapt, crashTest, getMode, loadMeta, onModeChange } from "@/lib/api";
-import type { ProgramResult } from "@/lib/program";
 import {
   ADAPT_STAGES, CRASH_STAGES, headlineFor, prefersReducedMotion, runStages,
 } from "@/lib/reveal";
@@ -158,7 +157,7 @@ export default function Page() {
    * choreography, same map. The only difference a viewer sees is that the
    * result card can now cite a proof instead of a claim.
    */
-  const landProgram = useCallback((plan: ProgramResult) => {
+  const landProgram = useCallback((plan: AdaptResult) => {
     setBusy(true); setError(null);
     setAdapted(plan);
     play<AdaptStage>(ADAPT_STAGES as never, setAdaptStage, "complete");
@@ -386,7 +385,10 @@ export default function Page() {
         />
       )}
 
-      {lab && <SolutionLab sel={sel} onClose={() => setLab(false)} />}
+      {lab && (
+        <SolutionLab sel={sel} onPlan={landProgram}
+          onClose={() => setLab(false)} />
+      )}
 
       {prog && isReady(sel) && (
         <ProgramPanel sel={sel} onPlan={landProgram}

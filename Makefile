@@ -6,7 +6,7 @@ export PYTHONPATH := pipeline:api
 # already satisfied.
 .PHONY: help api web run \
         step1 step2 step3 step4 step5 step6 step7 step7b step8 pipeline \
-        verify test-engine test-program check-determinism inspect check \
+        verify test-engine test-program test-routes check-determinism inspect check \
         clean-cache gates gates-live gates-program
 
 help:
@@ -19,6 +19,7 @@ help:
 	@echo "  make verify            - assert every cached artifact is consistent"
 	@echo "  make test-engine       - engine property tests"
 	@echo "  make test-program      - MILP / stated-program property tests"
+	@echo "  make test-routes       - every endpoint the frontend calls is registered"
 	@echo "  make check-determinism - same seed reproduces the same trips"
 	@echo "  make inspect           - visual QA map of the pipeline geometry"
 	@echo "  make gates             - browser release gates (needs api + web up)"
@@ -59,10 +60,11 @@ step8:  ; $(PY) pipeline/step08_export_web.py
 pipeline: step1 step2 step3 step4 step5 step6 step7 step7b step8
 
 # --- checks ---------------------------------------------------------------
-check: verify test-engine test-program
+check: verify test-engine test-program test-routes
 verify:      ; @$(PY) pipeline/verify.py
 test-engine: ; @$(PY) api/test_engine.py
 test-program: ; @$(PY) api/test_program.py
+test-routes: ; @$(PY) api/test_routes.py
 inspect:     ; @$(PY) pipeline/inspect_map.py && open data/cache/inspect.html
 
 # The before/after comparison is only meaningful if the same seed reproduces

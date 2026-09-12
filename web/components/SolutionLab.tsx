@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-import type { Selection } from "@/lib/types";
+import type { AdaptResult, Selection, SolutionComparison } from "@/lib/types";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -45,17 +45,12 @@ interface ChatReply {
   examples?: { draft: Draft; verdict: Verdict }[];
 }
 
-interface SimResult {
+/** The plan the engine built, in the shape the map already renders. */
+type SimResult = AdaptResult & {
   custom: { key: string; label: string; cost_usd: number; shade_m: number };
-  counts: Record<string, number>;
-  spent_usd: number;
-  before_severe: number;
-  after_severe: number;
-  before_experienced_utci_c: number;
-  after_experienced_utci_c: number;
-  reduction_pct: number;
-  rank_trace?: { unbought?: { kind: string; reason: string }[] };
-}
+  comparison: SolutionComparison;
+  segments: { severe_minutes: number; heat_load: number }[];
+};
 
 const STATUS_COPY: Record<string, { label: string; cls: string }> = {
   can_simulate: { label: "Can simulate", cls: "bg-emerald-100 text-emerald-900" },
@@ -83,8 +78,11 @@ const STATUS_COPY: Record<string, { label: string; cls: string }> = {
  * It degrades on purpose: with no key or no network it returns cached example
  * drafts, so the core Crash -> Adjust -> Re-test loop is never at risk.
  */
-export default function SolutionLab({ sel, onClose }: {
-  sel: Selection; onClose: () => void;
+export default function SolutionLab({ sel, onPlan, onClose }: {
+  sel: Selection;
+  /** Hand the confirmed plan to the map, exactly like any other plan. */
+  onPlan: (p: AdaptResult) => void;
+  onClose: () => void;
 }) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -161,7 +159,23 @@ export default function SolutionLab({ sel, onClose }: {
         }),
       });
       if (!r.ok) { setError((await r.json()).detail ?? "refused"); return; }
-      setSim(await r.json());
+      const plan = (await r.json()) as SimResult;
+      setSim(plan);
+      // Same derivations every other plan gets, so the map, the choreography
+      // and the result card render a custom solution without special cases.
+      const useSevere = plan.metric_used === "severe_person_minutes";
+      const tally = new Map<string, { seg_id: string; kind: string; count: number }>();
+      for (const q of plan.placements as unknown as { seg_id: string; kind: string }[]) {
+        const k = `${q.seg_id}|${q.kind}`;
+        const cur = tally.get(k);
+        if (cur) cur.count += 1; else tally.set(k, { ...q, count: 1 });
+      }
+      onPlan({
+        ...plan,
+        metric_values: plan.segments.map(
+          (x) => (useSevere ? x.severe_minutes : x.heat_load)),
+        placements: [...tally.values()],
+      });
     } catch {
       setError("The engine is not reachable.");
     } finally { setBusy(false); }
@@ -313,39 +327,52 @@ export default function SolutionLab({ sel, onClose }: {
           })}
 
           {sim && (
-            <div className="rounded-xl border-l-4 border-emerald-500
-              bg-emerald-50 p-3">
-              <h3 className="text-[14px] font-semibold text-emerald-900">
-                {sim.custom.label} priced against the built-ins
+            <div className="rounded-xl border-l-4 border-violet-500
+              bg-violet-50 p-3">
+              <h3 className="text-[14px] font-semibold text-violet-900">
+                {sim.custom.label}, simulated two ways
               </h3>
-              <div className="mt-1 space-y-0.5 text-[12px] text-emerald-900/85">
-                {Object.entries(sim.counts).map(([k, n]) => (
-                  <div key={k} className="flex justify-between">
-                    <span>{k.replace(/_/g, " ")}</span>
-                    <span className="tabular-nums font-semibold">{n}</span>
-                  </div>
-                ))}
-                <div className="flex justify-between border-t
-                  border-emerald-200 pt-0.5">
-                  <span>Severe exposure</span>
-                  <span className="tabular-nums font-semibold">
-                    {Math.round(sim.before_severe)} →{" "}
-                    {Math.round(sim.after_severe)} ({sim.reduction_pct}%)
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Experienced UTCI</span>
-                  <span className="tabular-nums font-semibold">
-                    {sim.before_experienced_utci_c.toFixed(2)} →{" "}
-                    {sim.after_experienced_utci_c.toFixed(2)} °C
-                  </span>
-                </div>
+              <p className="mt-0.5 text-[11.5px] text-violet-900/70">
+                Same scenario, same budget, same people. The plan on its own
+                is now drawn on the map behind this panel.
+              </p>
+
+              {/* On its own: what the measure does as the only option. */}
+              <div className="mt-2 rounded-lg bg-white/70 p-2">
+                <div className="text-[11px] font-semibold uppercase
+                  tracking-wider text-violet-800">On its own</div>
+                <Line k={`${sim.comparison.solo.units} units built`}
+                  v={`$${Math.round(sim.comparison.solo.spent_usd).toLocaleString()}`} />
+                <Line k="Severe exposure"
+                  v={`${Math.round(sim.comparison.before_severe)} \u2192 `
+                    + `${Math.round(sim.comparison.solo.after_severe)} `
+                    + `(\u2212${sim.comparison.solo.reduction_pct}%)`} />
               </div>
-              {sim.rank_trace?.unbought?.map((u) => (
+
+              {/* Against the built-ins: usually the more interesting answer. */}
+              <div className="mt-1.5 rounded-lg bg-white/70 p-2">
+                <div className="text-[11px] font-semibold uppercase
+                  tracking-wider text-violet-800">
+                  Competing with trees and shelters
+                </div>
+                <Line k={`${sim.custom.label} bought`}
+                  v={String(sim.comparison.mixed.custom_units)} />
+                {Object.entries(sim.comparison.mixed.counts)
+                  .filter(([k, n]) => n > 0 && k !== sim.custom.key)
+                  .map(([k, n]) => (
+                    <Line key={k} k={k.replace(/_/g, " ")} v={String(n)} />
+                  ))}
+                <Line k="Severe exposure"
+                  v={`${Math.round(sim.comparison.before_severe)} \u2192 `
+                    + `${Math.round(sim.comparison.mixed.after_severe)} `
+                    + `(\u2212${sim.comparison.mixed.reduction_pct}%)`} />
+              </div>
+
+              {sim.comparison.unbought.map((u) => (
                 <p key={u.kind} className="mt-1.5 text-[11px] leading-snug
-                  text-emerald-900/70">{u.reason}</p>
+                  text-violet-900/75">{u.reason}</p>
               ))}
-              <p className="mt-1.5 text-[11px] text-emerald-900/70">
+              <p className="mt-1.5 text-[11px] text-violet-900/70">
                 Every count, coordinate and impact number here was computed by
                 the deterministic engine under the numbers you confirmed.
               </p>
@@ -353,6 +380,16 @@ export default function SolutionLab({ sel, onClose }: {
           )}
         </div>
       </aside>
+    </div>
+  );
+}
+
+/** One labelled figure in the two-way comparison. */
+function Line({ k, v }: { k: string; v: string }) {
+  return (
+    <div className="flex justify-between gap-2 text-[12px] text-violet-900/85">
+      <span className="capitalize">{k}</span>
+      <span className="shrink-0 tabular-nums font-semibold">{v}</span>
     </div>
   );
 }

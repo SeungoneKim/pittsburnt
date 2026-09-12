@@ -203,21 +203,21 @@ def crash_test(req: CrashTestRequest) -> dict:
     }
 
 
-@app.post("/adapt")
-def adapt(req: AdaptRequest) -> dict:
-    """Spend a budget, then re-run the identical scenario and compare."""
-    try:
-        out = adapter.optimize(req.scenario, req.hour, req.persona,
-                               req.budget_usd, req.kinds, req.policy)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc))
+def _plan_payload(out: dict, request: dict, claim: str) -> dict:
+    """One plan shape, whoever built it.
+
+    The greedy optimiser, the stated program and a user-confirmed custom
+    solution all produce the same thing - a set of purchased units and the
+    engine's own before/after - so they all return it in the same shape. That
+    is what lets the map, the choreography and the result card render a
+    custom solution without knowing anything about it.
+    """
     before, after = out["before"], out["after"]
-    scope = _impact_scopes(before, after)
     changed = [{"seg_id": engine.seg_ids[i],
                 "sun_reduction": round(float(out["sun_delta"][i]), 4)}
                for i in np.nonzero(out["sun_delta"] > 1e-6)[0]]
     return {
-        "request": req.model_dump(),
+        "request": request,
         "snapshot_id": out["snapshot_id"],
         "input_hash": out["input_hash"],
         "status": out["status"],
@@ -235,7 +235,7 @@ def adapt(req: AdaptRequest) -> dict:
         "before_experienced_utci_c": round(before.experienced_utci_c, 2),
         "after_experienced_utci_c": round(after.experienced_utci_c, 2),
         "reduction_pct": round(out["reduction_pct"], 2),
-        "impact_scopes": scope,
+        "impact_scopes": _impact_scopes(before, after),
         "policy": out["policy"],
         "policy_label": out["policy_label"],
         "service_floor": out["service_floor"],
@@ -252,10 +252,22 @@ def adapt(req: AdaptRequest) -> dict:
         "placements": out["placements"],
         "changed_segments": changed,
         **_segments_payload(after, 20),
-        "claim_language": ("simulation-recommended allocation; greedy search, "
-                           "not a proven global optimum"),
+        "claim_language": claim,
         "disclaimer": DISCLAIMER,
     }
+
+
+@app.post("/adapt")
+def adapt(req: AdaptRequest) -> dict:
+    """Spend a budget, then re-run the identical scenario and compare."""
+    try:
+        out = adapter.optimize(req.scenario, req.hour, req.persona,
+                               req.budget_usd, req.kinds, req.policy)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return _plan_payload(out, req.model_dump(),
+                         "simulation-recommended allocation; greedy search, "
+                         "not a proven global optimum")
 
 
 # --- Add New Solution (Beta) ----------------------------------------------
@@ -423,35 +435,57 @@ def solution_simulate(req: SolutionSimulateRequest) -> dict:
     local = copy.copy(adapter)
     local.interventions = {k: dict(v) for k, v in adapter.interventions.items()}
     key = local.register(spec)
+    # Two runs, because the interesting answer is usually the second one.
+    #
+    # SOLO spends the whole budget on the proposed measure alone: what it
+    # would do if it were the only option, which is what a person proposing it
+    # actually wants to see - and what the map can draw.
+    #
+    # MIXED lets it compete with the built-ins. A $4,200 sail covering 12 m
+    # loses to a $1,200 tree covering 8 m on shade per dollar, so it is often
+    # bought zero times. That is not a failure to report quietly: it is the
+    # measure's answer, and the optimiser's own trace explains it.
     try:
-        out = local.optimize(req.scenario, req.hour, req.persona,
-                             req.budget_usd, (req.kinds or None), req.policy)
+        solo = local.optimize(req.scenario, req.hour, req.persona,
+                              req.budget_usd, [key], req.policy)
+        mixed = local.optimize(req.scenario, req.hour, req.persona,
+                               req.budget_usd, None, req.policy)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
-    before, after = out["before"], out["after"]
+    out = solo
     return {
-        "request": {**req.model_dump(exclude={"draft"}), "custom_kind": key},
+        **_plan_payload(out,
+                        {**req.model_dump(exclude={"draft"}),
+                         "custom_kind": key},
+                        "simulation-recommended allocation under a "
+                        "user-confirmed custom solution; greedy search, not a "
+                        "proven global optimum"),
+        # What the person confirmed, carried alongside so the map can draw it
+        # with its own mark and the result card can name it.
         "custom": {"key": key, "label": spec["label"],
                    "cost_usd": spec["cost_usd"], "block": spec["block"],
                    "shade_m": spec["shade_m"], "mechanism": spec["mechanism"]},
-        "snapshot_id": out["snapshot_id"], "input_hash": out["input_hash"],
-        "status": out["status"],
-        "spent_usd": out["spent_usd"], "counts": out["counts"],
-        "before_severe": round(before.severe_total, 2),
-        "after_severe": round(after.severe_total, 2),
-        "before_heat_load": round(before.heat_load_total, 2),
-        "after_heat_load": round(after.heat_load_total, 2),
-        "before_experienced_utci_c": round(before.experienced_utci_c, 2),
-        "after_experienced_utci_c": round(after.experienced_utci_c, 2),
-        "reduction_pct": round(out["reduction_pct"], 2),
-        "impact_scopes": _impact_scopes(before, after),
-        "unit_placements": out["unit_placements"],
-        "shade_footprints": out["shade_footprints"],
-        "rank_trace": out["rank_trace"],
-        "claim_language": ("simulation-recommended allocation under a "
-                           "user-confirmed custom solution; greedy search, "
-                           "not a proven global optimum"),
-        "disclaimer": DISCLAIMER,
+        # The head-to-head, stated rather than buried. Both sides are the
+        # engine's own numbers over the identical scenario and budget.
+        "comparison": {
+            "solo": {
+                "units": int(solo["counts"].get(key, 0)),
+                "spent_usd": solo["spent_usd"],
+                "after_severe": round(solo["after"].severe_total, 2),
+                "after_heat_load": round(solo["after"].heat_load_total, 2),
+                "reduction_pct": round(solo["reduction_pct"], 2),
+            },
+            "mixed": {
+                "counts": mixed["counts"],
+                "custom_units": int(mixed["counts"].get(key, 0)),
+                "spent_usd": mixed["spent_usd"],
+                "after_severe": round(mixed["after"].severe_total, 2),
+                "after_heat_load": round(mixed["after"].heat_load_total, 2),
+                "reduction_pct": round(mixed["reduction_pct"], 2),
+            },
+            "before_severe": round(solo["before"].severe_total, 2),
+            "unbought": mixed["rank_trace"].get("unbought", []),
+        },
     }
 
 

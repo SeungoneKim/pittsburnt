@@ -118,8 +118,14 @@ export default function StageOverlay({
                 <span className="tabular-nums text-slate-600">
                   {Object.entries(budget.counts)
                     .filter(([, n]) => n > 0)
-                    .map(([k, n]) =>
-                      `${n} ${meta.interventions[k]?.label.toLowerCase() ?? k}`)
+                    .map(([k, n]) => {
+                      // A custom solution is not in meta.interventions, so
+                      // without its own label the banner printed the raw key.
+                      const label = meta.interventions[k]?.label
+                        ?? (adapted?.custom?.key === k
+                          ? adapted.custom.label : k.replace(/_/g, " "));
+                      return `${n} ${label.toLowerCase()}`;
+                    })
                     .join(" · ") || "nothing placed yet"}
                 </span>
               </div>

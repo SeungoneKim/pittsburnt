@@ -112,6 +112,25 @@ function registerSprites(m: GLMap) {
     c.strokeStyle = "#0f766e"; c.lineWidth = 3 * k; c.stroke();
   }));
 
+  // A custom solution gets its own mark in the Beta panel's violet, because
+  // drawing a shade sail with the tree sprite would misreport what was built.
+  add("pb-custom", makeSprite((c, s) => {
+    const k = s / 64;
+    c.strokeStyle = "#5b21b6"; c.lineWidth = 4 * k; c.lineCap = "round";
+    c.beginPath();
+    c.moveTo(s * 0.16, s * 0.88); c.lineTo(s * 0.16, s * 0.44);
+    c.moveTo(s * 0.84, s * 0.88); c.lineTo(s * 0.84, s * 0.44);
+    c.stroke();
+    // A slack sail between the posts, not a flat roof.
+    c.beginPath();
+    c.moveTo(s * 0.10, s * 0.44);
+    c.quadraticCurveTo(s * 0.5, s * 0.12, s * 0.90, s * 0.44);
+    c.quadraticCurveTo(s * 0.5, s * 0.34, s * 0.10, s * 0.44);
+    c.closePath();
+    c.fillStyle = "#8b5cf6"; c.fill();
+    c.strokeStyle = "#5b21b6"; c.lineWidth = 3 * k; c.stroke();
+  }));
+
   // One walker per UTCI band, so colour comes from the sprite rather than
   // from tinting a glyph the renderer will not recolour.
   for (const [id, col] of [
@@ -159,6 +178,23 @@ function style(): any {
         paint: { "raster-opacity": 0.45, "raster-saturation": -0.7 } },
     ],
   };
+}
+
+/** Which mark a purchased unit is drawn with. */
+function spriteFor(kind: string): string {
+  if (kind === "shaded_shelter") return "pb-shelter";
+  if (kind === "tree") return "pb-tree";
+  return "pb-custom";          // anything a person added themselves
+}
+function tintFor(kind: string): string {
+  if (kind === "shaded_shelter") return "#14b8a6";
+  if (kind === "tree") return "#34d399";
+  return "#a78bfa";
+}
+function glowFor(kind: string): string {
+  if (kind === "shaded_shelter") return "#0d9488";
+  if (kind === "tree") return "#22c55e";
+  return "#7c3aed";
 }
 
 interface Props {
@@ -422,16 +458,14 @@ export default function MapView({
         m.addLayer({
           id: "shade-footprints", type: "fill", source: "shade-footprints",
           paint: {
-            "fill-color": ["match", ["get", "kind"],
-              "shaded_shelter", "#14b8a6", "#34d399"],
+            "fill-color": ["coalesce", ["get", "tint"], "#34d399"],
             "fill-opacity": ["*", 0.34, ["coalesce", ["get", "bloom"], 0]],
           },
         });
         m.addLayer({
           id: "shade-glow", type: "line", source: "shade-footprints",
           paint: {
-            "line-color": ["match", ["get", "kind"],
-              "shaded_shelter", "#0d9488", "#22c55e"],
+            "line-color": ["coalesce", ["get", "glow"], "#22c55e"],
             "line-width": ["interpolate", ["linear"], ["zoom"], 13, 6, 17, 22],
             "line-opacity": ["*", 0.22, ["coalesce", ["get", "bloom"], 0]],
             "line-blur": 12,
@@ -443,8 +477,10 @@ export default function MapView({
         m.addLayer({
           id: "placed", type: "symbol", source: "placed",
           layout: {
-            "icon-image": ["match", ["get", "kind"],
-              "shaded_shelter", "pb-shelter", "pb-tree"],
+            // The sprite is chosen per unit when the features are built, so a
+            // kind the map has never heard of - a custom solution - still
+            // draws as itself instead of falling through to a tree.
+            "icon-image": ["coalesce", ["get", "sprite"], "pb-tree"],
             // "zoom" must be the top-level input to interpolate, so the pop
             // scale multiplies inside each stop rather than wrapping it.
             "icon-size": ["interpolate", ["linear"], ["zoom"],
@@ -652,7 +688,8 @@ export default function MapView({
         const pop = age < 3 ? 0.25 + 0.75 * Math.min(1, age / 2.5) : 1;
         return {
           type: "Feature" as const,
-          properties: { kind: u.kind, pop, unitId: u.unitId },
+          properties: { kind: u.kind, pop, unitId: u.unitId,
+            sprite: spriteFor(u.kind) },
           geometry: { type: "Point" as const, coordinates: [u.lon, u.lat] },
         };
       }),
@@ -671,7 +708,11 @@ export default function MapView({
       type: "FeatureCollection",
       features: (adapted.shade_footprints?.features ?? [])
         .filter((f) => shown_ids.has(String(f.properties?.unitId)))
-        .map((f) => ({ ...f, properties: { ...f.properties, bloom } })),
+        .map((f) => {
+          const kind = String(f.properties?.kind);
+          return { ...f, properties: { ...f.properties, bloom,
+            tint: tintFor(kind), glow: glowFor(kind) } };
+        }),
     });
   }, [adapted, adaptStage, stageProgress, placedFraction]);
 
