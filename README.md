@@ -129,6 +129,59 @@ replace them when they arrive.
 
 `make gates-live` drives the whole panel against the configured model.
 
+### State a goal — the solver
+
+The Adjust panel's other door replaces the policy dropdown with a sentence.
+
+Why it exists: the 2.6 optimiser was measured **within 0.05% of optimal**, and
+a MILP has since **proved it exactly optimal**. That sounds like success and is
+really a diagnosis — the question was easy because it was under-specified. One
+cohort, one hour, one objective under one budget is a separable problem, and
+marginal greedy is exact for that shape.
+
+The hard problem was still there, hidden behind a hard-coded rule. Pure
+efficiency gives **57 of the 67 walked corridors nothing**, and one of the three
+hero corridors zero dollars — so "Balanced Protection" existed as a `for` loop
+that placed one shelter on each of three corridors named in the source. That is
+a policy written as control flow.
+
+Now you state the policy instead:
+
+> *"Protect older adults on Forbes, don't let any corridor get nothing, cap
+> Forbes at half the budget"*
+
+K2-Horizon compiles that into a typed program — an objective, the cells it
+applies to, and declarative constraints — which you can read before anything
+runs. HiGHS then solves it exactly. Measured on that sentence:
+
+| | corridors receiving something | Forbes share | heat load |
+|---|---|---|---|
+| unconstrained optimum | 10 | 25.5% | 15,064 |
+| the stated program | **67** | 39.4% | 15,169 |
+
+**Honouring the whole sentence costs 0.70% of total benefit.** That is the
+price of fairness, measured rather than asserted — and it is the number the
+hard-coded policy was hiding.
+
+The vocabulary is four declarative constraints — `corridor_floor`, `spend_cap`,
+`spend_floor`, `focus` — and the compiler is checked against the engine's real
+options. Ask for a street that does not exist, a tree count, a deadline or a
+health outcome and it is listed as **not expressible** rather than approximated
+into a number. Every constraint's fate is reported afterwards, including the
+ones that never bound: in the sentence above the Forbes cap never binds, and
+the panel says so instead of taking credit for it.
+
+Why the MILP is exact rather than an approximation: capacity is one site per
+`SITE_SPACING_M` = 10 m while a crown spans `shade_m` = 8 m, so coverage can
+never exceed 0.8 and the clip in the shade model never binds — exposure is
+exactly **linear** in tree count. The one non-linearity, unsheltered waiting
+seeing the footway's own sun, is linearised exactly with a big-M pair on the 84
+segments that carry both a stop and plantable sites. ~800 variables, solved in
+0.15 s, with a certified gap on screen.
+
+`make test-program` covers the solver with no model or network needed;
+`make gates-program` drives the demo sentence through the real UI.
+
 Without a key nothing breaks. The panel returns cached example drafts that
 still demonstrate the whole gate — one measure that can be simulated and
 three that honestly cannot, each naming the evidence it is missing — and the
@@ -156,12 +209,14 @@ committed, so a fresh clone can go straight to `make api` / `make web`.
 ## Supervising the work
 
 ```bash
-make check             # verify + test-engine together
+make check             # verify + test-engine + test-program together
 make verify            # 71 assertions over every cached artifact
 make test-engine       # 56 engine property tests
 make check-determinism # proves the same seed reproduces the same trips
 make inspect           # visual QA map of the pipeline's geometry
+make test-program      # 14 MILP / stated-program property tests
 make gates             # 36 browser release gates (needs api + web running)
+make gates-program     # the demo sentence, compiled and solved end to end
 ```
 
 `make verify` re-opens each artifact cold and checks what downstream code

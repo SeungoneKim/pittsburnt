@@ -6,8 +6,8 @@ export PYTHONPATH := pipeline:api
 # already satisfied.
 .PHONY: help api web run \
         step1 step2 step3 step4 step5 step6 step7 step7b step8 pipeline \
-        verify test-engine check-determinism inspect check clean-cache \
-        gates gates-live
+        verify test-engine test-program check-determinism inspect check \
+        clean-cache gates gates-live gates-program
 
 help:
 	@echo "Run the demo"
@@ -18,10 +18,12 @@ help:
 	@echo "  make check             - verify + test-engine together"
 	@echo "  make verify            - assert every cached artifact is consistent"
 	@echo "  make test-engine       - engine property tests"
+	@echo "  make test-program      - MILP / stated-program property tests"
 	@echo "  make check-determinism - same seed reproduces the same trips"
 	@echo "  make inspect           - visual QA map of the pipeline geometry"
 	@echo "  make gates             - browser release gates (needs api + web up)"
 	@echo "  make gates-live        - Beta panel against the real model (needs a key)"
+	@echo "  make gates-program     - the demo sentence, compiled and solved (needs a key)"
 	@echo ""
 	@echo "Rebuild the data (each step caches; run only what you need)"
 	@echo "  make step1  walk graph -> corridor-labelled segments"
@@ -55,9 +57,10 @@ step8:  ; $(PY) pipeline/step08_export_web.py
 pipeline: step1 step2 step3 step4 step5 step6 step7 step7b step8
 
 # --- checks ---------------------------------------------------------------
-check: verify test-engine
+check: verify test-engine test-program
 verify:      ; @$(PY) pipeline/verify.py
 test-engine: ; @$(PY) api/test_engine.py
+test-program: ; @$(PY) api/test_program.py
 inspect:     ; @$(PY) pipeline/inspect_map.py && open data/cache/inspect.html
 
 # The before/after comparison is only meaningful if the same seed reproduces
@@ -82,3 +85,8 @@ gates:
 # stay verifiable without either.
 gates-live:
 	node tests/live_model_gate.mjs
+
+# The demo sentence, driven through the real UI against the real model and
+# HiGHS. Needs a key, so it is separate from `gates`.
+gates-program:
+	node tests/program_gate.mjs

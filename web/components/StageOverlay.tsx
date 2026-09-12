@@ -95,8 +95,12 @@ export default function StageOverlay({
                   }}
                 />
               </div>
-              {/* The spec: if zero of a type were bought, say why. */}
-              {adapted && !running && adapted.counts.shaded_shelter === 0 && (
+              {/* The spec: if zero of a type were bought, say why. This
+                  explains the GREEDY objective, so it must not appear over a
+                  stated program - that plan bought what its own constraints
+                  asked for, and the solver reports its own reasons. */}
+              {adapted && !running && adapted.counts.shaded_shelter === 0
+                && adapted.policy !== "stated_program" && (
                 <p className="mt-1 text-[10px] leading-snug text-slate-500">
                   No shelters selected: a tree removes more severe minutes per
                   dollar here, because waiting is{" "}

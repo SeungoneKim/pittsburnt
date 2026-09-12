@@ -13,7 +13,7 @@ import type { Meta, Selection } from "@/lib/types";
  * to answer it before they know what the problem is.
  */
 export default function AdjustModal({
-  meta, sel, onChange, onRun, onClose, cachedOnly, onOpenLab,
+  meta, sel, onChange, onRun, onClose, cachedOnly, onOpenLab, onOpenProgram,
 }: {
   meta: Meta;
   sel: Selection;
@@ -22,6 +22,7 @@ export default function AdjustModal({
   onClose: () => void;
   cachedOnly: boolean;
   onOpenLab: () => void;
+  onOpenProgram: () => void;
 }) {
   const [text, setText] = useState(formatBudget(sel.budget));
   const [error, setError] = useState<string | null>(null);
@@ -116,11 +117,31 @@ export default function AdjustModal({
           share of exposure, so pure efficiency never protects a waiting rider.
         </p>
 
+        {/* Say what the plan must achieve and let a solver answer, instead of
+            choosing between two policies someone hard-coded. */}
+        <button
+          onClick={onOpenProgram}
+          className="mt-4 w-full rounded-xl border border-indigo-200
+            bg-indigo-50 px-3 py-2 text-left transition hover:border-indigo-400"
+        >
+          <span className="text-[13px] font-semibold text-indigo-900">
+            State a goal instead
+            <span className="ml-1.5 rounded bg-indigo-200 px-1 py-0.5
+              text-[9px] font-bold uppercase tracking-wide text-indigo-900">
+              solver
+            </span>
+          </span>
+          <span className="block text-[11.5px] leading-snug text-indigo-900/70">
+            Describe what the plan has to achieve — including who must not be
+            left out — and get the provably optimal plan for it.
+          </span>
+        </button>
+
         {/* The two built-ins are the demo. A custom solution is a Beta side
             door: it never blocks, and never changes, the main loop. */}
         <button
           onClick={onOpenLab}
-          className="mt-4 w-full rounded-xl border border-violet-200
+          className="mt-2 w-full rounded-xl border border-violet-200
             bg-violet-50 px-3 py-2 text-left transition hover:border-violet-400"
         >
           <span className="text-[13px] font-semibold text-violet-900">

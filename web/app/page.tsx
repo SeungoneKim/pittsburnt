@@ -7,11 +7,13 @@ import AdjustModal from "@/components/AdjustModal";
 import CrashButton from "@/components/CrashButton";
 import ResultCard from "@/components/ResultCard";
 import SetupCard from "@/components/SetupCard";
+import ProgramPanel from "@/components/ProgramPanel";
 import SolutionLab from "@/components/SolutionLab";
 import SourcesDrawer from "@/components/SourcesDrawer";
 import StageOverlay from "@/components/StageOverlay";
 import type { Layers } from "@/components/SetupCard";
 import { adapt, crashTest, getMode, loadMeta, onModeChange } from "@/lib/api";
+import type { ProgramResult } from "@/lib/program";
 import {
   ADAPT_STAGES, CRASH_STAGES, headlineFor, prefersReducedMotion, runStages,
 } from "@/lib/reveal";
@@ -50,6 +52,7 @@ export default function Page() {
   const [showAdjust, setShowAdjust] = useState(false);
   const [sources, setSources] = useState<string | null>(null);
   const [lab, setLab] = useState(false);
+  const [prog, setProg] = useState(false);
   const reveal = useRef<{ skip: () => void; cancel: () => void } | null>(null);
   const resetMap = useRef<(() => void) | null>(null);
 
@@ -128,6 +131,17 @@ export default function Page() {
     }
   }, [sel, result, play]);
 
+  /**
+   * A solved program lands exactly like a greedy plan: same shape, same
+   * choreography, same map. The only difference a viewer sees is that the
+   * result card can now cite a proof instead of a claim.
+   */
+  const landProgram = useCallback((plan: ProgramResult) => {
+    setBusy(true); setError(null);
+    setAdapted(plan);
+    play<AdaptStage>(ADAPT_STAGES as never, setAdaptStage, "complete");
+  }, [play]);
+
   const replay = useCallback(() => {
     setBusy(true);
     if (adapted) play<AdaptStage>(ADAPT_STAGES as never, setAdaptStage, "complete");
@@ -148,7 +162,7 @@ export default function Page() {
     setBusy(false);
     setCrashStage("idle"); setAdaptStage("idle");
     setStageProgress(0); setSeqProgress(0);
-    setShowAdjust(false); setSources(null); setLab(false);
+    setShowAdjust(false); setSources(null); setLab(false); setProg(false);
     setLayers(NO_LAYERS);
     resetMap.current?.();
   }, []);
@@ -330,10 +344,16 @@ export default function Page() {
           onRun={runAdapt} onClose={() => setShowAdjust(false)}
           cachedOnly={mode === "fallback"}
           onOpenLab={() => { setShowAdjust(false); setLab(true); }}
+          onOpenProgram={() => { setShowAdjust(false); setProg(true); }}
         />
       )}
 
       {lab && <SolutionLab sel={sel} onClose={() => setLab(false)} />}
+
+      {prog && isReady(sel) && (
+        <ProgramPanel sel={sel} onPlan={landProgram}
+          onClose={() => setProg(false)} />
+      )}
 
       {sources && (
         <SourcesDrawer

@@ -231,3 +231,114 @@ def clarify(text: str, missing: list[str], why: str) -> list[str]:
         except Exception:
             pass
     return [q.strip() for q in qs if isinstance(q, str) and q.strip()][:3]
+
+
+# --- compiling a stated program -------------------------------------------
+#
+# The second thing the model is allowed to do, and the more useful one. It
+# does not choose where a tree goes, what it costs or what it achieves - it
+# turns a sentence into a formal program that a MILP then solves exactly.
+# Every field it emits is checked against the engine's real vocabulary, and a
+# program that names a street the model invented is refused rather than
+# quietly dropped.
+
+PROGRAM_SYSTEM = """You translate a planner's sentence into ONE optimisation \
+program for a pedestrian heat model of Oakland, Pittsburgh. You never solve \
+it, never choose locations, and never estimate any effect. A solver does that.
+
+Return ONE JSON object and nothing else. No prose, no code fence.
+
+{
+  "objective": one of OBJECTIVES,
+  "budget_usd": number,
+  "cells": [ { "scenario": ..., "hour": ..., "persona": ..., "weight": 1.0 } ],
+  "constraints": [ ... ],
+  "restated": "one plain sentence describing the program you built",
+  "unsupported": [ "any part of the request this vocabulary cannot express" ]
+}
+
+CONSTRAINT VOCABULARY - use only these four:
+
+  {"type":"focus","scope":{"corridor":NAME},"weight":N}
+      A PREFERENCE. Weights benefit on that corridor N times higher in the
+      objective. Use for "protect X on Y", "prioritise Y", "focus on Y".
+      Default weight 3.
+
+  {"type":"corridor_floor","min_units":N}
+      Every corridor carrying walking demand must receive at least N units.
+      Use for "don't let any corridor get nothing", "spread it around",
+      "nowhere left out". Default min_units 1.
+
+  {"type":"spend_cap","scope":{"corridor":NAME},"max_fraction":F}
+      At most fraction F of the budget inside that scope. Use for "cap Y at
+      half the budget" (F=0.5), "no more than a quarter on Y" (F=0.25).
+
+  {"type":"spend_floor","scope":{"corridor":NAME},"min_fraction":F}
+      At least fraction F of the budget inside that scope.
+
+RULES
+
+1. Every "corridor" value MUST be copied exactly from CORRIDORS below. Never
+   invent or abbreviate a street name. If the planner names a street that is
+   not in the list, omit that constraint and say so in "unsupported".
+2. "persona", "hour" and "scenario" MUST come from the lists below. If the
+   sentence does not state one, use the DEFAULT given.
+3. If the sentence asks for something this vocabulary cannot express - a
+   specific number of trees, a deadline, a material, a health outcome - do
+   NOT approximate it. Leave it out and list it in "unsupported".
+4. Prefer "min_heat_load". Use "min_severe" only if the planner explicitly
+   asks about the severe or 38 C threshold.
+5. "protect <group> on <street>" means BOTH: set the persona to that group,
+   AND add a focus constraint on that street."""
+
+
+def compile_program(text: str, vocabulary: dict) -> dict:
+    """Turn a sentence into a typed optimisation program.
+
+    `vocabulary` carries the engine's real options - corridors, personas,
+    hours, scenarios and the defaults from the current selection - so this
+    function never has to know anything about the model itself.
+    """
+    ctx = (
+        f"OBJECTIVES: {', '.join(vocabulary['objectives'])}\n"
+        f"PERSONAS: {', '.join(vocabulary['personas'])}\n"
+        f"HOURS: {', '.join(str(h) for h in vocabulary['hours'])}\n"
+        f"SCENARIOS: {', '.join(vocabulary['scenarios'])}\n"
+        f"DEFAULT scenario={vocabulary['default_scenario']} "
+        f"hour={vocabulary['default_hour']} "
+        f"persona={vocabulary['default_persona']} "
+        f"budget_usd={vocabulary['default_budget']}\n"
+        f"CORRIDORS (exact names, copy verbatim):\n"
+        + "\n".join(f"  {c}" for c in vocabulary["corridors"])
+    )
+    raw = _chat([{"role": "system", "content": PROGRAM_SYSTEM},
+                 {"role": "user", "content": f"{ctx}\n\nSENTENCE: {text[:600]}"}],
+                json_mode=True)
+    return _json_object(raw)
+
+
+REPAIR_PROMPT = """The program you produced was refused by the engine. Fix \
+exactly these problems and return the corrected JSON object, nothing else.
+
+PROBLEMS:
+{reasons}
+
+YOUR PROGRAM:
+{program}"""
+
+
+def repair_program(spec: dict, reasons: list[str], vocabulary: dict) -> dict:
+    """One repair attempt against the gate's own complaints.
+
+    The gate decides what is wrong; the model only rewrites. If this fails
+    the caller shows the refusal, which is a perfectly good outcome - a
+    refused program with named reasons beats a program that silently ran
+    against something the planner did not ask for.
+    """
+    ctx = ("CORRIDORS (exact names): "
+           + ", ".join(vocabulary["corridors"][:60]))
+    raw = _chat([{"role": "system", "content": PROGRAM_SYSTEM},
+                 {"role": "user", "content": ctx + "\n\n" + REPAIR_PROMPT.format(
+                     reasons="\n".join(f"  - {r}" for r in reasons),
+                     program=json.dumps(spec)[:2000])}], json_mode=True)
+    return _json_object(raw)

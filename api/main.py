@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 import copy
 
 import llm
+import program
 import solutions
 from engine import (HEAT_LOAD_BASE_C, INTERVENTIONS, SEVERE_UTCI_C, Adapter,
                     Engine)
@@ -448,6 +449,151 @@ def solution_simulate(req: SolutionSimulateRequest) -> dict:
         "claim_language": ("simulation-recommended allocation under a "
                            "user-confirmed custom solution; greedy search, "
                            "not a proven global optimum"),
+        "disclaimer": DISCLAIMER,
+    }
+
+
+# --- stated optimisation programs -----------------------------------------
+
+def _vocabulary(scenario: str, hour: int, persona: str, budget: float) -> dict:
+    """The engine's real options, so the compiler never has to guess one."""
+    from collections import defaultdict
+    hi = engine.hour_index(hour); pi = engine.persona_index(persona)
+    demand = defaultdict(float)
+    for i, sid in enumerate(engine.seg_ids):
+        c = engine.seg_corridor.get(sid)
+        if c:
+            demand[c] += float(engine.minutes[i, pi, hi]) \
+                + float(engine.wait_minutes[i, pi, hi])
+    return {
+        "objectives": list(program.OBJECTIVES),
+        "constraint_types": program.CONSTRAINT_TYPES,
+        "personas": engine.personas, "hours": engine.hours,
+        "scenarios": list(engine.scenarios["scenarios"]),
+        "default_scenario": scenario, "default_hour": hour,
+        "default_persona": persona, "default_budget": budget,
+        # Only corridors people actually walk at this hour. Offering the
+        # other 61 named streets would invite a program about a place with
+        # nobody on it.
+        "corridors": [c for c, v in sorted(demand.items(), key=lambda x: -x[1])
+                      if v > 0],
+    }
+
+
+def _spec_hash(spec: dict) -> str:
+    """A program is part of the question, so it is part of the snapshot."""
+    from provenance import fnv1a
+    return fnv1a(engine.dataset_version + "|"
+                 + json.dumps(spec, sort_keys=True, separators=(",", ":")))
+
+
+class CompileRequest(BaseModel):
+    text: str = Field(..., min_length=3, max_length=600)
+    scenario: str = "heat2035"
+    hour: int = 15
+    persona: str = "older_adults"
+    budget_usd: float = Field(250000, gt=0)
+
+
+class SolveRequest(BaseModel):
+    spec: dict
+
+
+@app.get("/program/vocabulary")
+def program_vocabulary(scenario: str = "heat2035", hour: int = 15,
+                       persona: str = "older_adults",
+                       budget_usd: float = 250000) -> dict:
+    v = _vocabulary(scenario, hour, persona, budget_usd)
+    return {**v, "provider": llm.provider(),
+            "boundary": ("The model writes the program. The solver answers "
+                         "it. Every corridor name, population and hour it "
+                         "emits is checked against this vocabulary, and a "
+                         "program naming something that does not exist is "
+                         "refused rather than quietly dropped.")}
+
+
+@app.post("/program/compile")
+def program_compile(req: CompileRequest) -> dict:
+    """Sentence -> typed program. Validated, and repaired once if refused."""
+    if not llm.configured():
+        raise HTTPException(503, "No model is configured; write the program "
+                                 "by hand or use a preset.")
+    vocab = _vocabulary(req.scenario, req.hour, req.persona, req.budget_usd)
+    try:
+        spec = llm.compile_program(req.text, vocab)
+    except Exception as exc:
+        raise HTTPException(502, f"the model is unavailable: {exc}")
+
+    v = program.validate_spec(spec, engine)
+    repaired = False
+    if not v.ok:
+        # The gate says what is wrong; the model only rewrites. If the second
+        # attempt still fails we show the refusal, which is a good outcome.
+        try:
+            spec2 = llm.repair_program(spec, v.reasons, vocab)
+            v2 = program.validate_spec(spec2, engine)
+            if v2.ok:
+                spec, v, repaired = spec2, v2, True
+        except Exception:
+            pass
+    return {"spec": spec, "repaired": repaired,
+            "restated": spec.get("restated"),
+            "unsupported": spec.get("unsupported") or [],
+            "verdict": {"ok": v.ok, "reasons": v.reasons,
+                        "missing": v.missing, "questions": v.questions}}
+
+
+@app.post("/program/solve")
+def program_solve(req: SolveRequest) -> dict:
+    """Solve a stated program exactly. No language model is involved here."""
+    spec = req.spec
+    v = program.validate_spec(spec, engine)
+    if not v.ok:
+        raise HTTPException(422, "; ".join(v.reasons) or "program refused")
+    sol = program.solve(engine, adapter, spec)
+    if sol["status"] != "complete":
+        return {"status": sol["status"], "solver": sol["solver"], "spec": spec}
+    out = program.materialise(engine, adapter, spec, sol)
+    before, after = out["before"], out["after"]
+    h = _spec_hash(spec)
+    return {
+        "status": "complete", "spec": spec,
+        "input_hash": h, "snapshot_id": f"prog-{h}",
+        "solver": out["solver"], "constraint_report": out["constraint_report"],
+        "budget_usd": out["budget_usd"], "spent_usd": out["spent_usd"],
+        "counts": out["counts"], "metric_used": out["metric_used"],
+        "before_severe": round(before.severe_total, 2),
+        "after_severe": round(after.severe_total, 2),
+        "before_walking_severe": round(before.walking_severe_total, 2),
+        "after_walking_severe": round(after.walking_severe_total, 2),
+        "before_waiting_severe": round(before.waiting_severe_total, 2),
+        "after_waiting_severe": round(after.waiting_severe_total, 2),
+        "before_heat_load": round(before.heat_load_total, 2),
+        "after_heat_load": round(after.heat_load_total, 2),
+        "before_experienced_utci_c": round(before.experienced_utci_c, 2),
+        "after_experienced_utci_c": round(after.experienced_utci_c, 2),
+        "reduction_pct": round(out["reduction_pct"], 2),
+        "impact_scopes": _impact_scopes(before, after),
+        "policy": "stated_program",
+        "policy_label": "Stated program (solved exactly)",
+        "service_floor": [],
+        "after_sun": [round(float(x), 4) for x in out["after_sun"]],
+        "after_utci_c": [round(float(x), 2) for x in out["after_utci_c"]],
+        "after_shelter_coverage": [round(float(x), 4)
+                                   for x in out["after_shelter_coverage"]],
+        "unit_placements": out["unit_placements"],
+        "shade_footprints": out["shade_footprints"],
+        "placements": out["placements"],
+        "rank_trace": {"objective": program.OBJECTIVES[spec["objective"]],
+                       "claim": ("exact optimum of the stated program under "
+                                 "the engine's own model; "
+                                 + out["solver"]["certificate"]),
+                       "by_kind": {}, "best_site": None,
+                       "placements_considered": len(out["placements"]),
+                       "unspent_usd": round(out["budget_usd"]
+                                            - out["spent_usd"], 2),
+                       "unbought": []},
+        **_segments_payload(after, 20),
         "disclaimer": DISCLAIMER,
     }
 
