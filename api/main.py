@@ -112,6 +112,30 @@ def meta() -> dict:
     }
 
 
+@app.get("/geometry/segments")
+def geometry_segments() -> dict:
+    """Segment centrelines. Static for the life of a build, so cache hard."""
+    return json.loads((CACHE / "segments.geojson").read_text())
+
+
+@app.get("/geometry/{layer}")
+def geometry_layer(layer: str, hour: int | None = None) -> dict:
+    """Baseline context layers: buildings, trees, trips, corridors, shadows."""
+    names = {"buildings": "buildings.geojson", "trees": "trees.geojson",
+             "trips": "trips.geojson", "corridors": "corridors.geojson"}
+    if layer == "shadow":
+        if hour not in engine.hours:
+            raise HTTPException(400, f"hour must be one of {engine.hours}")
+        path = CACHE / f"shadow_{hour:02d}.geojson"
+    elif layer in names:
+        path = CACHE / names[layer]
+    else:
+        raise HTTPException(404, f"unknown layer '{layer}'")
+    if not path.exists():
+        raise HTTPException(404, f"{path.name} not built")
+    return json.loads(path.read_text())
+
+
 @app.post("/crash-test")
 def crash_test(req: CrashTestRequest) -> dict:
     try:
