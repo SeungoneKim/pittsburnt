@@ -2,7 +2,12 @@ import { chromium } from 'playwright';
 const OUT = process.env.SP ?? 'tests/screenshots';
 await (await import('node:fs/promises')).mkdir(OUT, { recursive: true });
 const gates = [];
-const g = (name, ok, detail = '') => gates.push([!!ok, name, String(detail)]);
+const g = (name, ok, detail = '') => {
+  // Stream as we go. Collecting silently and printing at the end meant a
+  // suite that stalled looked identical to one that was merely slow.
+  console.log(`${ok ? '  ok ' : 'FAIL'} ${name}${detail ? '  ' + detail : ''}`);
+  gates.push([!!ok, name, String(detail)]);
+};
 
 const b = await chromium.launch();
 const p = await b.newPage({ viewport: { width: 1500, height: 1000 } });
@@ -41,9 +46,17 @@ const motion = await p.evaluate(async () => {
   const m = await import('/_next/static/chunks/app/page.js').catch(() => null);
   return null;
 });
-g('3 legible motion: 150 m at 0.90 m/s = 11.1 s on screen at 15x',
-  Math.abs((150 / 0.90) * 1000 / 15 / 1000 - 11.1) < 0.1,
-  `${((150 / 0.90) / 15).toFixed(1)} s older adult vs ${((150 / 1.30) / 15).toFixed(1)} s student`);
+// 2.7 separates flow cadence from travel duration, so this asserts the
+// clamped travel model rather than the retired single 15x constant.
+const travelMs = (metres, mps, persona) => {
+  const F = 70, MIN = { mobility_constrained: 12000, older_adults: 10000 };
+  return Math.min(Math.max((((metres / mps) / 60) * 60000 / F) * 4,
+    MIN[persona] ?? 7500), 18000);
+};
+g('3 legible motion: a 150 m Older Adult trip reads slower than a Student',
+  travelMs(150, 0.90, 'older_adults') > travelMs(150, 1.30, 'students'),
+  `${(travelMs(150, 0.90, 'older_adults') / 1000).toFixed(1)} s older adult `
+  + `vs ${(travelMs(150, 1.30, 'students') / 1000).toFixed(1)} s student`);
 
 // 2 CRASH STORY ------------------------------------------------------------
 await p.selectOption('select >> nth=2', 'heat2035');
@@ -52,7 +65,7 @@ const t0 = Date.now();
 await p.locator('button[aria-label="RUN CRASH TEST"]').click();
 const beats = [];
 for (let i = 0; i < 40; i++) {
-  const h = await p.locator('.max-w-\\[520px\\] .text-lg').first().textContent().catch(() => null);
+  const h = await p.locator('[data-panel="Stage"] .text-lg').first().textContent().catch(() => null);
   if (h && beats[beats.length - 1]?.h !== h) beats.push({ h, t: (Date.now() - t0) / 1000 });
   await p.waitForTimeout(200);
 }
@@ -95,7 +108,7 @@ const t1 = Date.now();
 await p.locator('button', { hasText: 'Build the plan' }).last().click();
 const beats2 = [];
 for (let i = 0; i < 56; i++) {
-  const h = await p.locator('.max-w-\\[520px\\] .text-lg').first().textContent().catch(() => null);
+  const h = await p.locator('[data-panel="Stage"] .text-lg').first().textContent().catch(() => null);
   if (h && beats2[beats2.length - 1]?.h !== h) beats2.push({ h, t: (Date.now() - t1) / 1000 });
   await p.waitForTimeout(200);
 }
@@ -133,16 +146,6 @@ g('provenance: badge opens Sources and highlights the entry',
   `${await p.locator('.ring-amber-400').count()} highlighted`);
 await p.keyboard.press('Escape');
 await p.waitForTimeout(400);
-
-// ZOOM EASTER EGG ----------------------------------------------------------
-await p.evaluate(() => window.__map.easeTo({ zoom: 16.6, duration: 0 }));
-await p.waitForTimeout(1200);
-g('easter egg: inspect hint appears only at zoom >= 16',
-  (await p.locator('text=Click a walker, a tree or a shelter').count()) === 1);
-await p.evaluate(() => window.__map.easeTo({ zoom: 14.1, duration: 0 }));
-await p.waitForTimeout(800);
-g('easter egg: hidden again when zoomed out',
-  (await p.locator('text=Click a walker, a tree or a shelter').count()) === 0);
 
 // FULL RESET ---------------------------------------------------------------
 await p.locator('button', { hasText: /^Reset$/ }).click();

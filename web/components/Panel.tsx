@@ -31,6 +31,7 @@ export default function Panel({
     return (
       <button
         onClick={() => setOpen(true)}
+        data-panel={`${title} (minimized)`}
         aria-label={`Restore ${title}`}
         className="pointer-events-auto flex items-center gap-2 rounded-full
           border border-slate-200 bg-white/95 py-2 pl-3 pr-4 text-[13px]
@@ -47,6 +48,9 @@ export default function Panel({
   return (
     <div
       style={{ width }}
+      // A stable handle for the collision gates. Measuring panels by their
+      // text made the overlap check pass vacuously when the selector missed.
+      data-panel={title}
       className={`pointer-events-auto overflow-hidden rounded-3xl border
         shadow-2xl shadow-slate-900/10 backdrop-blur-md ${tone === "result"
           ? "border-white/70 bg-white/92"

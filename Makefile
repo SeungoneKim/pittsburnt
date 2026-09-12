@@ -22,6 +22,7 @@ help:
 	@echo "  make check-determinism - same seed reproduces the same trips"
 	@echo "  make inspect           - visual QA map of the pipeline geometry"
 	@echo "  make gates             - browser release gates (needs api + web up)"
+	@echo "  make gates-ui          - the 2.7 UI checklist at 1366x768 and 1920x1080"
 	@echo "  make gates-live        - Beta panel against the real model (needs a key)"
 	@echo "  make gates-program     - the demo sentence, compiled and solved (needs a key)"
 	@echo ""
@@ -78,7 +79,13 @@ clean-cache:
 # responsive gate against a real render, which no unit test can do.
 gates:
 	node tests/release_gates.mjs
+	node tests/ui_27_gates.mjs
 	node tests/solution_lab_gate.mjs
+
+# The 2.7 UI checklist on its own: empty start, people, motion, contrast,
+# metric truth, panel collision and reset. No model or key needed.
+gates-ui:
+	node tests/ui_27_gates.mjs
 
 # The Beta panel driven against a real configured model. Separate from
 # `gates` on purpose: it needs a key and a network, and the core demo must

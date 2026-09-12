@@ -255,7 +255,8 @@ make test-engine       # 56 engine property tests
 make check-determinism # proves the same seed reproduces the same trips
 make inspect           # visual QA map of the pipeline's geometry
 make test-program      # 14 MILP / stated-program property tests
-make gates             # 36 browser release gates (needs api + web running)
+make gates             # browser release gates (needs api + web running)
+make gates-ui          # the 2.7 UI checklist at 1366x768 and 1920x1080
 make gates-program     # the demo sentence, compiled and solved end to end
 ```
 
@@ -303,11 +304,18 @@ Both matter: at 3 PM the 2035 and 2050 scenarios have *identical* severe
 totals, because the binary 38 °C threshold counts the same sun-exposed
 minutes once both cross it. Only heat load can see the difference.
 
-Playback runs at one declared 15× time compression for every persona, with no
-minimum duration. A 150 m route therefore takes an older adult 11.1 s on
-screen and a student 7.7 s — the difference is the point of the control.
-Zoom changes pixels per metre and nothing else; exposure is always computed
-in physical minutes.
+Playback runs on **two presentation clocks**, because density and legibility
+are different questions and one constant could not answer both — at 90× the
+street was busy but every walker teleported, at 15× each walker was readable
+but the street looked deserted. `FLOW_TIME_COMPRESSION = 70` sets how much of
+the day's flow is on screen; travel duration is derived from it and clamped
+per cohort, so a 150 m route takes an older adult **10.0 s** and a student
+**7.5 s**. Zoom changes pixels per metre and nothing else; exposure is always
+computed in physical minutes with no compression at all.
+
+72 representative walkers are drawn, each on a white backplate — the sprite's
+own 1-pixel stroke vanished against pale roads and red thermal lines, which is
+why the map read as empty rather than sparse.
 
 Trees are bought onto a **candidate-site layer**: sites walked along each
 centreline and kept only when at least 10 m from the previous one *in a
@@ -316,6 +324,21 @@ street two points 10 m apart along the kerb can be 7.8 m apart on the ground,
 which would let two crowns overlap and double-count the person-minutes
 underneath them. The shade each unit casts is returned by the engine as an
 oriented rectangle, not drawn by the map as a decorative circle.
+
+## Two numbers that are easy to confuse
+
+**Severe exposure** is accumulated person-minutes at or above UTCI 38 °C. It
+is *not* a headcount: reading "950" as "950 people" would be wrong. The result
+card therefore also shows **visible agents in severe heat** — 31 / 72 (43%) —
+as its own row with its own units. That is the share of representative icons
+in the current frame, not a Pittsburgh population risk rate, and the tooltip
+says so.
+
+**Protection efficiency** replaced "budget left". How much of the budget went
+unspent is the least interesting fact about a plan; what a dollar buys is the
+argument. It is quoted per $10,000 because per-dollar (0.000426) is not a
+number anyone can hold, and it is computed from each run's own before, after
+and spend — never hard-coded.
 
 ## Honesty machinery
 

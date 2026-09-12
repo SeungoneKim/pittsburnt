@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 
 import {
   buildRoutes, doseAt, doseProfile, progressAt, sampleRoute,
 } from "@/lib/agents";
 import type { AgentRoute } from "@/lib/agents";
+import { mapPadding, placePopover, zones } from "@/lib/zones";
 
 /** Used only to position a neutral agent before any snapshot exists. */
 const BLANK = { utci_sun_c: 0, utci_shade_c: 0 } as unknown as CrashResult;
@@ -160,24 +161,6 @@ function style(): any {
   };
 }
 
-/** Published UTCI stress class for a value. Never a renamed percentile. */
-function bandName(u: number): string {
-  if (u >= 46) return "Extreme Heat Stress";
-  if (u >= 38) return "Very Strong Heat Stress";
-  if (u >= 32) return "Strong Heat Stress";
-  if (u >= 26) return "Moderate Heat Stress";
-  return "No Thermal Stress";
-}
-
-interface Inspect {
-  kind: "agent" | "unit";
-  title: string;
-  rows: [string, string][];
-  note: string;
-  sweat?: boolean;
-  tone?: "cool" | "warm" | "hot";
-}
-
 interface Props {
   meta: Meta;
   result: CrashResult | null;
@@ -194,12 +177,20 @@ interface Props {
   placedFraction: number;
   /** Hand the page a way to clear every dynamic layer on reset. */
   registerReset: (fn: () => void) => void;
+  /**
+   * How many visible agents are currently in severe heat, out of how many are
+   * drawn. A property of this frame and these representative icons - never a
+   * population rate, and never the severe-exposure metric, which is
+   * accumulated person-minutes and has no headcount in it at all.
+   */
+  onVisibleSevere?: (inSevere: number, total: number) => void;
   onSegmentClick?: (segId: string, index: number) => void;
 }
 
 export default function MapView({
   meta, result, adapted, hour, layers, persona, crashStage, adaptStage,
   stageProgress, placedFraction, registerReset, onSegmentClick,
+  onVisibleSevere,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const map = useRef<GLMap | null>(null);
@@ -212,36 +203,13 @@ export default function MapView({
   const agents = useRef<AgentRoute[]>([]);
   const doses = useRef<number[][]>([]);
   const raf = useRef<number | null>(null);
-  const frozenU = useRef(0);
-
-  /**
-   * Zoom Easter egg: human-scale cause and effect.
-   *
-   * Below zoom 16 the map is a planning view and nothing on it is clickable
-   * except a street. At 16 and above, after a crash test has run, the walkers
-   * and the purchased units become inspectable - one walker's own route time,
-   * local UTCI band and accumulated dose, or one unit's actual modelled shade
-   * footprint. It reads the returned snapshot and never mutates it: no route,
-   * count, optimiser decision or headline number changes.
-   */
-  const [zoom, setZoom] = useState(14.1);
-  const [inspect, setInspect] = useState<Inspect | null>(null);
-  const frozen = useRef<number | null>(null);
-  const resultRef = useRef<CrashResult | null>(null);
-  const adaptedRef = useRef<AdaptResult | null>(null);
-  const metaRef = useRef(meta);
-  const interactive = useRef(false);
-
-  // The map's event handlers are registered once and outlive every render,
-  // so they read the current snapshot through refs rather than through a
-  // closure over the props they were created with.
-  useEffect(() => {
-    resultRef.current = result;
-    adaptedRef.current = adapted;
-    metaRef.current = meta;
-    interactive.current = zoom >= 16 && !!result;
-  }, [result, adapted, meta, zoom]);
-
+  // Reported on a timer, not every frame: at 60 fps a live count flickers
+  // between adjacent integers and reads as noise.
+  const lastReport = useRef(0);
+  const report = useRef(onVisibleSevere);
+  // The animation loop outlives every render, so it reads the current
+  // callback through a ref rather than closing over the one it was born with.
+  useEffect(() => { report.current = onVisibleSevere; }, [onVisibleSevere]);
   // --- create the map once -------------------------------------------------
   useEffect(() => {
     if (map.current || !ref.current) return;
@@ -402,6 +370,25 @@ export default function MapView({
             "circle-blur": 0.6,
           },
         });
+        // A backplate under every walker.
+        //
+        // The sprite carries a white stroke, but at demo icon sizes that
+        // stroke is roughly a pixel and disappears against a pale road or a
+        // red thermal line - which is why the map read as empty. An opaque
+        // circle behind the glyph gives it a silhouette that survives any
+        // background, and it is a separate layer so it scales with zoom
+        // independently of the icon.
+        m.addLayer({
+          id: "agent-shadow", type: "circle", source: "agents",
+          layout: { visibility: "none" },
+          paint: {
+            "circle-radius": ["interpolate", ["linear"], ["zoom"],
+              12, 4, 15, 7, 17, 10],
+            "circle-color": "rgba(255,255,255,0.92)",
+            "circle-stroke-color": "rgba(15,23,42,0.45)",
+            "circle-stroke-width": 1.2,
+          },
+        });
         // A walking figure, not a dot: the layer is about people, and a
         // glyph says so without a legend entry.
         m.addLayer({
@@ -416,7 +403,10 @@ export default function MapView({
               ["<", ["get", "utci"], 38], "pb-walk-hot",
               "pb-walk-severe",
             ],
-            "icon-size": ["interpolate", ["linear"], ["zoom"], 12, 0.3, 15, 0.5, 17, 0.72],
+            // Roughly a third larger than 2.6 at every stop: the walkers are
+            // the subject of this layer and were being lost in the ramp.
+            "icon-size": ["interpolate", ["linear"], ["zoom"],
+              12, 0.42, 15, 0.68, 17, 0.92],
             "icon-allow-overlap": true,
             "icon-ignore-placement": true,
           },
@@ -445,13 +435,6 @@ export default function MapView({
             "line-width": ["interpolate", ["linear"], ["zoom"], 13, 6, 17, 22],
             "line-opacity": ["*", 0.22, ["coalesce", ["get", "bloom"], 0]],
             "line-blur": 12,
-          },
-        });
-        m.addLayer({
-          id: "unit-highlight", type: "line", source: "shade-footprints",
-          filter: ["==", ["get", "unitId"], "__none__"],
-          paint: {
-            "line-color": "#0f172a", "line-width": 2.5, "line-opacity": 0.9,
           },
         });
         m.addSource("placed", {
@@ -487,10 +470,25 @@ export default function MapView({
           },
         });
 
-        const popup = new GL.Popup({ closeButton: false, maxWidth: "260px" });
+        // At most one contextual popup, and it opens inside the strip the
+        // panels leave free. Letting the renderer pick an anchor put it under
+        // the result card at 1366x768 - the one width the demo is shown at.
+        const popup = new GL.Popup({
+          closeButton: true, closeOnClick: true, maxWidth: "260px",
+        });
         m.on("click", "segments", (e: any) => {
           const f = e.features?.[0];
           if (!f) return;
+          const { safe } = zones(window.innerWidth, window.innerHeight);
+          const want = placePopover(
+            { x: e.point.x, y: e.point.y }, { w: 260, h: 130 },
+            window.innerWidth, window.innerHeight);
+          // A popup the shared rule had to move opens on the side it was
+          // moved to, rather than fighting the renderer's own anchor.
+          popup.options.anchor = want.y + want.h <= e.point.y ? "bottom"
+            : want.x > e.point.x ? "left"
+              : want.x + want.w < e.point.x ? "right" : "top";
+          void safe;
           const p = f.properties as Record<string, unknown>;
           onSegmentClick?.(String(p.seg_id), Number(f.id));
           const st = m.getFeatureState({ source: "segments", id: f.id as number }) as
@@ -506,94 +504,6 @@ export default function MapView({
         m.on("mouseenter", "segments", () => { m.getCanvas().style.cursor = "pointer"; });
         m.on("mouseleave", "segments", () => { m.getCanvas().style.cursor = ""; });
 
-        m.on("zoom", () => setZoom(m.getZoom()));
-
-        // --- the zoom Easter egg ---------------------------------------
-        for (const id of ["agent-dot", "placed"]) {
-          m.on("mouseenter", id, () => {
-            if (interactive.current) m.getCanvas().style.cursor = "pointer";
-          });
-          m.on("mouseleave", id, () => { m.getCanvas().style.cursor = ""; });
-        }
-
-        m.on("click", "agent-dot", (e: any) => {
-          if (!interactive.current) return;
-          e.originalEvent?.stopPropagation?.();
-          const f = e.features?.[0];
-          const res = resultRef.current;
-          if (!f || !res) return;
-          const idx = Number(f.properties.idx);
-          const r = agents.current[idx];
-          if (!r) return;
-          // Freeze this one walker where it stands. Everyone else keeps
-          // moving; the model is untouched either way.
-          frozen.current = frozen.current === idx ? null : idx;
-          const utci = Number(f.properties.utci);
-          setInspect(frozen.current === null ? null : {
-            kind: "agent",
-            title: "One modelled walker",
-            rows: [
-              ["Route time", `${r.minutes.toFixed(1)} min at ` +
-                `${(r.minutes > 0 ? (r.visualDurationMs / 1000) : 0).toFixed(1)} s on screen`],
-              ["Local UTCI", utci >= 0 ? `${utci.toFixed(1)} °C · ${bandName(utci)}`
-                : "not yet scored"],
-              ["Exposure so far",
-                `${Number(f.properties.severe).toFixed(2)} severe person-min`],
-            ],
-            note: "A modelled trip, not an individual medical outcome.",
-            sweat: utci >= 38,
-          });
-        });
-
-        m.on("click", "placed", (e: any) => {
-          if (!interactive.current) return;
-          e.originalEvent?.stopPropagation?.();
-          const f = e.features?.[0];
-          const ad = adaptedRef.current;
-          const res = resultRef.current;
-          if (!f || !ad || !res) return;
-          const unitId = String(f.properties.unitId);
-          const unit = ad.unit_placements.find((u) => u.unitId === unitId);
-          if (!unit) return;
-          const i = metaRef.current.seg_ids.indexOf(unit.segmentId);
-          const after = i >= 0 ? ad.after_utci_c[i] : res.utci_sun_c;
-          const before = i >= 0
-            ? res.sun[i] * res.utci_sun_c + (1 - res.sun[i]) * res.utci_shade_c
-            : res.utci_sun_c;
-          const dim = metaRef.current.footprint_m?.[unit.kind];
-          // Highlight the footprint this unit actually casts.
-          m.setFilter("unit-highlight", ["==", ["get", "unitId"], unitId]);
-          setInspect({
-            kind: "unit",
-            title: unit.kind === "tree" ? "Street tree" : "Shaded waiting shelter",
-            rows: [
-              ["Shade footprint", dim
-                ? `${dim.along_m} m along the footway × ${dim.across_m} m across`
-                : "—"],
-              ["Protects", unit.kind === "tree"
-                ? "walking time on this segment"
-                : `waiting time at ${unit.stopId ?? "this stop"}`],
-              ["Segment UTCI", `${before.toFixed(1)} → ${after.toFixed(1)} °C`],
-              ["Reaches", bandName(after)],
-            ],
-            note: unit.kind === "shaded_shelter"
-              ? "A shelter covers waiting at its stop. It does not cool the street."
-              : "One tree shades its own length of footway, not the whole street.",
-            tone: after < 32 ? "cool" : after < 38 ? "warm" : "hot",
-          });
-        });
-
-        // Clicking empty map clears the inspection.
-        m.on("click", (e: any) => {
-          if (m.queryRenderedFeatures(e.point,
-            { layers: ["agent-dot", "placed"] }).length) return;
-          frozen.current = null;
-          setInspect(null);
-          if (m.getLayer("unit-highlight")) {
-            m.setFilter("unit-highlight", ["==", ["get", "unitId"], "__none__"]);
-          }
-        });
-
         // Reset contract: cancel animation, clear every feature-state key,
         // and empty every dynamic source. A reset that leaves a halo or a
         // stale agent behind is not a reset.
@@ -602,11 +512,6 @@ export default function MapView({
           raf.current = null;
           agents.current = [];
           doses.current = [];
-          frozen.current = null;
-          setInspect(null);
-          if (m.getLayer("unit-highlight")) {
-            m.setFilter("unit-highlight", ["==", ["get", "unitId"], "__none__"]);
-          }
           for (const id of ["agents", "placed", "shade-footprints"]) {
             const src = m.getSource(id);
             if (src) src.setData({ type: "FeatureCollection", features: [] });
@@ -620,11 +525,20 @@ export default function MapView({
               m.setLayoutProperty(`shadow-${h}`, "visibility", "none");
             }
           }
+          // Recentre on the visible strip, not on the window behind the
+          // panels, so "reset" does not park Oakland under the result card.
           m.easeTo({
             center: [meta.center.lon, meta.center.lat], zoom: 14.1,
-            duration: 600,
+            padding: mapPadding(), duration: 600,
           });
         });
+
+        // People sit above the roads they walk on. The thermal ramp and the
+        // hotspot halo are drawn after the agent layers are created, so the
+        // agents are lifted back to the top once every layer exists.
+        for (const id of ["agent-halo", "agent-shadow", "agent-dot"]) {
+          if (m.getLayer(id)) m.moveLayer(id);
+        }
 
         ready.current = true;
         // Handy for inspecting a live map from the browser console.
@@ -773,6 +687,7 @@ export default function MapView({
     set("trees", layers.trees);
     set("trips", layers.trips);
     set("agent-halo", layers.agents);
+    set("agent-shadow", layers.agents);
     set("agent-dot", layers.agents);
     for (const h of meta.hours) set(`shadow-${h}`, layers.shadow && h === hour);
   }, [layers, hour, meta.hours]);
@@ -812,15 +727,13 @@ export default function MapView({
         // Each agent runs on its own real duration, so a slower cohort
         // visibly takes longer over the same ground. A frozen walker holds
         // its last position - it is paused for inspection, not rewound.
-        const u = frozen.current === i ? frozenU.current : progressAt(r, t);
-        if (frozen.current !== i) frozenU.current = u;
+        const u = progressAt(r, t);
         const st = sampleRoute(r, u, result ?? BLANK);
         const dose = (coloured || afterColoured) && doses.current[i]
           ? doseAt(r, doses.current[i], u) : 0;
         return {
           type: "Feature" as const,
           properties: {
-            idx: i,
             utci: coloured || afterColoured ? st.utci : -1,
             severe: dose,
           },
@@ -828,6 +741,12 @@ export default function MapView({
         };
       });
       src.setData({ type: "FeatureCollection", features });
+      if (now - lastReport.current > 500) {
+        lastReport.current = now;
+        const hot = features.filter(
+          (f) => f.properties.utci >= meta.severe_threshold_utci_c).length;
+        report.current?.(hot, features.length);
+      }
       raf.current = requestAnimationFrame(tick);
     };
     raf.current = requestAnimationFrame(tick);
@@ -838,78 +757,6 @@ export default function MapView({
   return (
     <div className="absolute inset-0">
       <div ref={ref} className="h-full w-full" />
-
-      {/* The Easter egg announces itself once it is available, rather than
-          being a secret only the author knows about. */}
-      {result && zoom >= 16 && !inspect && (
-        <div className="pointer-events-none absolute bottom-28 left-1/2
-          -translate-x-1/2 rounded-full bg-slate-900/80 px-3 py-1.5
-          text-[12px] font-medium text-white shadow-lg">
-          Click a walker, a tree or a shelter to inspect it
-        </div>
-      )}
-
-      {inspect && (
-        <div className="pointer-events-auto absolute left-1/2 top-20 z-20
-          w-[300px] -translate-x-1/2 rounded-2xl border border-slate-200
-          bg-white/96 p-4 shadow-2xl backdrop-blur">
-          <div className="flex items-center gap-2">
-            {inspect.sweat && (
-              <span className="relative flex h-3 w-3" aria-hidden>
-                <span className="absolute inline-flex h-full w-full
-                  animate-ping rounded-full bg-red-400 opacity-75" />
-                <span className="relative inline-flex h-3 w-3 rounded-full
-                  bg-red-500" />
-              </span>
-            )}
-            <h3 className="text-[15px] font-bold tracking-tight text-slate-900">
-              {inspect.title}
-            </h3>
-            <button
-              onClick={() => {
-                frozen.current = null;
-                setInspect(null);
-                const m = map.current;
-                if (m?.getLayer("unit-highlight")) {
-                  m.setFilter("unit-highlight",
-                    ["==", ["get", "unitId"], "__none__"]);
-                }
-              }}
-              className="ml-auto text-[13px] text-slate-400 hover:text-slate-800"
-            >
-              Close
-            </button>
-          </div>
-          <dl className="mt-2 space-y-1">
-            {inspect.rows.map(([k, v]) => (
-              <div key={k} className="flex justify-between gap-3 text-[12.5px]">
-                <dt className="shrink-0 text-slate-500">{k}</dt>
-                <dd className="text-right font-medium tabular-nums text-slate-900">
-                  {v}
-                </dd>
-              </div>
-            ))}
-          </dl>
-          {/* Colour follows the computed band and stops where the model
-              stops: a unit that only reaches Strong stress is not drawn
-              green. */}
-          {inspect.tone && (
-            <div className={`mt-2 rounded-lg px-2 py-1 text-[11.5px] font-semibold
-              ${inspect.tone === "cool" ? "bg-emerald-50 text-emerald-800"
-                : inspect.tone === "warm" ? "bg-amber-50 text-amber-800"
-                  : "bg-orange-50 text-orange-800"}`}>
-              {inspect.tone === "cool"
-                ? "Cooled below Strong Heat Stress here"
-                : inspect.tone === "warm"
-                  ? "Still Strong Heat Stress here — real relief, not safety"
-                  : "Still above the severe threshold here"}
-            </div>
-          )}
-          <p className="mt-2 text-[11px] leading-snug text-slate-500">
-            {inspect.note}
-          </p>
-        </div>
-      )}
     </div>
   );
 }

@@ -93,16 +93,11 @@ export default function ThreeState({ meta, sel, result, adapted }: {
           <Row key={r.label} {...r} />
         ))}
       </div>
-      <p className="mt-2 text-[11.5px] leading-snug text-slate-500">
-        Humidity {result.conditions.rh_pct.toFixed(0)}%, wind{" "}
-        {result.conditions.wind_ms.toFixed(2)} m/s and solar radiation are{" "}
-        <b className="font-semibold text-slate-600">held constant</b> across
-        every column, so only air temperature carries the warming.
-      </p>
-      <p className="mt-1 text-[11.5px] leading-snug text-slate-500">
-        The plan&apos;s effect is the change between the last two columns. The
-        2026 column is context: comparing it with the adjusted future would
-        credit shade with undoing the warming too.
+      <p className="mt-2 text-[11px] leading-snug text-slate-500">
+        Humidity, wind and solar are <b className="font-semibold
+        text-slate-600">held constant</b> — only air temperature carries the
+        warming. The plan&apos;s effect is the change across the last two
+        columns; 2026 is context.
       </p>
     </div>
   );

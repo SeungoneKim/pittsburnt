@@ -1,5 +1,8 @@
 "use client";
 
+import { useState } from "react";
+
+import { GUTTER, RESULT_W, SETUP_W } from "@/lib/zones";
 import type { AdaptResult, Meta } from "@/lib/types";
 
 interface Props {
@@ -22,15 +25,38 @@ export default function StageOverlay({
   headline, detail, progress, running, onSkip, onReplay, canReplay,
   budget, meta, adapted,
 }: Props) {
+  const [open, setOpen] = useState(true);
   if (!headline && !canReplay) return null;
 
+  // Minimized, it is a pill in the same reserved strip - the spec's rule is
+  // that every persistent surface can get out of the way of the map, and
+  // this was the only one that could not.
+  if (!open) {
+    return (
+      <div className="pointer-events-none absolute top-4 z-10 flex justify-center"
+        style={{ left: GUTTER + SETUP_W + GUTTER,
+          right: GUTTER + RESULT_W + GUTTER }}>
+        <button onClick={() => setOpen(true)}
+          aria-label="Restore Plan complete"
+          className="pointer-events-auto rounded-full border border-slate-200
+            bg-white/95 px-3.5 py-1.5 text-[12.5px] font-semibold text-slate-700
+            shadow-lg backdrop-blur hover:bg-white">
+          {headline ?? "Plan"} · restore
+        </button>
+      </div>
+    );
+  }
+
   return (
-    // Centred in the space left of the result panel, not in the whole map,
-    // so the two never overlap at the width the demo is shown at.
-    <div className="pointer-events-none absolute left-4 right-[382px] top-4 z-10
-      mx-auto max-w-[520px]">
+    // Inside the centre safe zone: left of the result panel, right of the
+    // setup panel, so at 1366x768 the three bounding boxes cannot intersect.
+    <div className="pointer-events-none absolute top-4 z-10 mx-auto
+      max-w-[460px]"
+      style={{ left: GUTTER + SETUP_W + GUTTER,
+        right: GUTTER + RESULT_W + GUTTER }}>
       {headline && (
-        <div className="rounded-xl border border-slate-200 bg-white/95 px-4 py-3 shadow-lg backdrop-blur">
+        <div data-panel="Stage"
+          className="rounded-xl border border-slate-200 bg-white/95 px-4 py-3 shadow-lg backdrop-blur">
           <div className="flex items-baseline justify-between gap-3">
             <div>
               {/* One large headline, readable from projection distance. */}
@@ -41,6 +67,16 @@ export default function StageOverlay({
                 <div className="text-xs text-slate-600">{detail}</div>
               )}
             </div>
+            <button
+              onClick={() => setOpen(false)}
+              aria-label="Minimize Plan complete"
+              title="Minimize"
+              className="pointer-events-auto order-last shrink-0 grid h-6 w-6
+                place-items-center rounded-md text-[15px] leading-none
+                text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+            >
+              −
+            </button>
             {running && (
               <button
                 onClick={onSkip}

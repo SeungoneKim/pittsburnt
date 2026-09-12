@@ -30,9 +30,18 @@ const EMPTY: Selection = {
   scenario: null, hour: null, persona: null,
   budget: 250000, policy: "balanced_protection",
 };
+/**
+ * Every layer off, Moving People included.
+ *
+ * This was `agents: true`, which made the pill look selected on first load
+ * while MapView drew nothing - it cannot place a walker before Who and Time
+ * exist. The empty-start contract says no dynamic layer is on until someone
+ * asks for it, and a pill that claims to be on while showing nothing breaks
+ * that in the most confusing possible way.
+ */
 const NO_LAYERS: Layers = {
   shadow: false, canopy: false, trees: false,
-  buildings: false, trips: false, agents: true,
+  buildings: false, trips: false, agents: false,
 };
 
 export default function Page() {
@@ -51,6 +60,8 @@ export default function Page() {
   const [seqProgress, setSeqProgress] = useState(0);
   const [showAdjust, setShowAdjust] = useState(false);
   const [sources, setSources] = useState<string | null>(null);
+  const [visible, setVisible] = useState<{ severe: number; total: number }>(
+    { severe: 0, total: 0 });
   const [lab, setLab] = useState(false);
   const [prog, setProg] = useState(false);
   const reveal = useRef<{ skip: () => void; cancel: () => void } | null>(null);
@@ -87,7 +98,18 @@ export default function Page() {
    */
   const patch = useCallback((p: Partial<Selection>) => {
     if (busy) return;   // inputs lock only while a sequence runs
-    setSel((s) => ({ ...s, ...p }));
+    setSel((s) => {
+      const next = { ...s, ...p };
+      // The acceptance matrix: once Who and Time both exist, neutral walkers
+      // appear straight away - before any Crash Test. Switching the layer on
+      // by hand at that moment is busywork, and leaving it off makes the
+      // street look empty at exactly the point it should fill.
+      if (next.persona !== null && next.hour !== null
+          && (s.persona === null || s.hour === null)) {
+        setLayers((l) => ({ ...l, agents: true }));
+      }
+      return next;
+    });
     const changesQuestion = "scenario" in p || "hour" in p || "persona" in p;
     setAdapted(null);
     setAdaptStage("idle");
@@ -163,6 +185,7 @@ export default function Page() {
     setCrashStage("idle"); setAdaptStage("idle");
     setStageProgress(0); setSeqProgress(0);
     setShowAdjust(false); setSources(null); setLab(false); setProg(false);
+    setVisible({ severe: 0, total: 0 });
     setLayers(NO_LAYERS);
     resetMap.current?.();
   }, []);
@@ -233,12 +256,14 @@ export default function Page() {
         stageProgress={stageProgress}
         placedFraction={placedFraction}
         registerReset={(fn) => { resetMap.current = fn; }}
+        onVisibleSevere={(severe, total) => setVisible({ severe, total })}
       />
 
       <div className="pointer-events-none absolute inset-0 p-4">
         <div className="absolute left-4 top-4">
           <SetupCard
             meta={meta} sel={sel} onChange={patch}
+            peopleReady={sel.persona !== null && sel.hour !== null}
             layers={layers}
             onLayers={(p) => setLayers((l) => ({ ...l, ...p }))}
             locked={busy}
@@ -270,6 +295,7 @@ export default function Page() {
               meta={meta} sel={sel} result={result}
               adapted={adaptStage === "land" || adaptStage === "complete" ? adapted : null}
               topHotspot={hotspots[0] ?? null}
+              visible={visible}
               onOpenSources={(k) => setSources(k ?? "provenance")}
               onViewAllHotspots={() => setSources("hotspots")}
             />
@@ -318,7 +344,7 @@ export default function Page() {
 
         {/* Clear of the map's own zoom controls, which live bottom-right. */}
         {showResult && result && (
-          <div className="pointer-events-none absolute bottom-6 left-[352px] rounded-xl
+          <div className="pointer-events-none absolute bottom-6 left-[324px] rounded-xl
             border border-slate-200 bg-white/95 px-3 py-2 shadow backdrop-blur">
             <div className="flex items-center gap-2">
               <div className="relative h-2.5 w-44 rounded-full"

@@ -17,6 +17,8 @@ export interface Layers {
 interface Props {
   meta: Meta;
   sel: Selection;
+  /** Moving People cannot render before we know who is walking, and when. */
+  peopleReady: boolean;
   onChange: (p: Partial<Selection>) => void;
   layers: Layers;
   onLayers: (p: Partial<Layers>) => void;
@@ -32,10 +34,10 @@ interface Props {
  * person has to touch, at a size that reads from across a room.
  */
 export default function SetupCard({
-  meta, sel, onChange, layers, onLayers, locked, onOpenSources,
+  meta, sel, onChange, layers, onLayers, locked, onOpenSources, peopleReady,
 }: Props) {
   return (
-    <Panel title="Set up the test" icon="🔧" width={332}>
+    <Panel title="Set up the test" icon="🔧" width={292}>
       <header className="px-4 pb-2 pt-1">
         <h1 className="text-[23px] font-extrabold leading-none tracking-tight">
           MEET <span className="text-red-600">PITTSBURNT</span>
@@ -47,7 +49,54 @@ export default function SetupCard({
 
       {/* Internal scrolling only, and only when the viewport is short: the
           panel never grows past the window and never clips at 1366x768. */}
-      <div className="max-h-[calc(100dvh-260px)] overflow-y-auto px-4 pb-4">
+      {/* Existing protection leads: turning on Trees, Canopy or Building
+          Shade is a satisfying map reveal, and it is the one thing a person
+          can do before answering any question.
+
+          The height is sized so all three selectors fit without scrolling at
+          1366x768 - the demo's worst case. Moving this section to the top
+          made the card taller, and at 292px wide the long pill labels each
+          took a whole row, which pushed Future Scenario below the fold. */}
+      <div className="max-h-[calc(100dvh-190px)] overflow-y-auto px-4 pb-4">
+        <Section icon="🍃" title="Existing protection" help="protection"
+          onHelp={onOpenSources}>
+          <div className="grid grid-cols-2 gap-1.5">
+            {([
+              ["trees", "Tree Inventory", "🌳"],
+              ["canopy", "Canopy Cover", "🌲"],
+              ["shadow", "Building Shade", "🏢"],
+              ["agents", "Moving People", "🚶"],
+              ["trips", "Walking Routes", "🗺"],
+            ] as const).map(([key, label, icon]) => {
+              const blocked = key === "agents" && !peopleReady;
+              return (
+                <button
+                  key={key}
+                  onClick={() => onLayers({ [key]: !layers[key] })}
+                  aria-pressed={layers[key]}
+                  disabled={blocked}
+                  title={blocked ? "Choose Who and Time first" : undefined}
+                  className={`flex items-center gap-1 overflow-hidden rounded-full
+                    border px-2.5 py-1.5 text-[11.5px] whitespace-nowrap transition ${
+                      blocked
+                        ? "cursor-not-allowed border-slate-200 bg-slate-50 text-slate-300"
+                        : layers[key]
+                          ? "border-emerald-300 bg-emerald-50 font-medium text-emerald-900"
+                          : "border-slate-200 bg-white text-slate-500 hover:border-slate-400"
+                    }`}
+                >
+                  <span aria-hidden>{icon}</span>{label}
+                </button>
+              );
+            })}
+          </div>
+          {!peopleReady && (
+            <p className="mt-1.5 text-[11.5px] text-slate-400">
+              Choose Who and Time first to see people moving.
+            </p>
+          )}
+        </Section>
+
         <Section icon="⏱" title="Time" help="time" onHelp={onOpenSources}>
           <Drop
             value={sel.hour}
@@ -78,32 +127,6 @@ export default function SetupCard({
           />
         </Section>
 
-        <Section icon="🍃" title="Existing protection" help="protection"
-          onHelp={onOpenSources}>
-          <div className="flex flex-wrap gap-1.5">
-            {([
-              ["trees", "Existing Tree Inventory", "🌳"],
-              ["canopy", "Existing Canopy Coverage", "🌲"],
-              ["shadow", "Building Shade", "🏢"],
-              ["agents", "Moving People", "🚶"],
-              ["trips", "Walking Routes", "🗺"],
-            ] as const).map(([key, label, icon]) => (
-              <button
-                key={key}
-                onClick={() => onLayers({ [key]: !layers[key] })}
-                aria-pressed={layers[key]}
-                className={`flex items-center gap-1.5 rounded-full border px-3
-                  py-1.5 text-[12px] transition ${
-                    layers[key]
-                      ? "border-emerald-300 bg-emerald-50 font-medium text-emerald-900"
-                      : "border-slate-200 bg-white text-slate-500 hover:border-slate-400"
-                  }`}
-              >
-                <span aria-hidden>{icon}</span>{label}
-              </button>
-            ))}
-          </div>
-        </Section>
       </div>
     </Panel>
   );
@@ -124,13 +147,13 @@ function Section({ icon, title, help, onHelp, children }: {
     >
       <div className="mb-2 flex items-center gap-2">
         <span aria-hidden className="text-[14px]">{icon}</span>
-        <h2 className="text-[13px] font-semibold uppercase tracking-[0.1em]
-          text-slate-500">{title}</h2>
+        <h2 className="shrink-0 whitespace-nowrap text-[12.5px] font-semibold
+          uppercase tracking-[0.07em] text-slate-500">{title}</h2>
         {/* Help appears on hover or focus, so it is discoverable without
             occupying the resting surface. */}
         <button
           onClick={() => onHelp(help)}
-          className={`ml-auto text-[11px] underline decoration-dotted
+          className={`ml-auto min-w-0 truncate text-[11px] underline decoration-dotted
             underline-offset-2 transition ${
               hover ? "text-slate-500 opacity-100" : "text-slate-400 opacity-0"
             } focus:opacity-100`}

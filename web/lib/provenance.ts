@@ -95,9 +95,17 @@ export function validateSnapshot(
 
 export const STATUS_LABEL: Record<ValueStatus, string> = {
   source: "Source",
-  computed: "Computed",
-  assumption: "Assumption",
+  computed: "Calculated",
+  assumption: "Assumed",
   missing: "Missing",
+};
+
+/** What each label means, for the tooltip on the badge. */
+export const STATUS_MEANING: Record<ValueStatus, string> = {
+  source: "Value taken from an external source",
+  computed: "Value calculated by the engine",
+  assumption: "Explicit planning assumption",
+  missing: "Required value not yet available",
 };
 
 export const STATUS_STYLE: Record<ValueStatus, string> = {
@@ -107,10 +115,3 @@ export const STATUS_STYLE: Record<ValueStatus, string> = {
   missing: "bg-red-100 text-red-800",
 };
 
-/** The three-letter mark used on a value in the UI. */
-export const STATUS_ABBR: Record<ValueStatus, string> = {
-  source: "SOU",
-  computed: "COM",
-  assumption: "ASS",
-  missing: "MIS",
-};

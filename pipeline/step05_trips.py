@@ -38,7 +38,7 @@ from config import (CACHE, CRS_METRIC, CRS_WGS84, DERIVED_PERSONA,
 # How many routes to export per (persona, hour) for the moving-agent layer.
 # The spec asks for 40-60 visible agents drawn from the active cohort, so
 # every combination the UI can select needs at least that many.
-DISPLAY_ROUTES_PER_COMBO = 55
+DISPLAY_ROUTES_PER_COMBO = 90
 
 MINUTES_PATH = CACHE / "minutes.npz"
 TRIPS_PATH = CACHE / "trips.geojson"

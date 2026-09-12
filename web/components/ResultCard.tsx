@@ -2,11 +2,26 @@
 
 import Panel from "@/components/Panel";
 import ThreeState from "@/components/ThreeState";
-import { STATUS_ABBR, STATUS_STYLE } from "@/lib/provenance";
+import { STATUS_LABEL, STATUS_MEANING, STATUS_STYLE } from "@/lib/provenance";
 import type { ValueStatus } from "@/lib/provenance";
 import type { AdaptResult, CrashResult, Meta, Selection } from "@/lib/types";
 
 const fmt = (n: number) => Math.round(n).toLocaleString();
+
+/**
+ * Protection efficiency: severe person-minutes avoided per $10,000.
+ *
+ * Computed from this run's own before/after and spend - never hard-coded.
+ * It moves with the dataset, the unit costs and the plan, and quoting it per
+ * $10K rather than per dollar keeps it readable (0.000426 per dollar is not
+ * a number anyone can hold).
+ */
+function efficiency(a: AdaptResult): string {
+  const saved = a.before_severe - a.after_severe;
+  const spent = a.spent_usd;
+  if (!spent || saved <= 0) return "—";
+  return (saved / spent * 10_000).toFixed(2);
+}
 
 function band(u: number) {
   if (u >= 46) return { label: "Extreme Heat Stress", cls: "text-red-900" };
@@ -24,37 +39,44 @@ function band(u: number) {
  * the matching entry.
  */
 export default function ResultCard({
-  meta, sel, result, adapted, topHotspot, onOpenSources, onViewAllHotspots,
+  meta, sel, result, adapted, topHotspot, visible, onOpenSources,
+  onViewAllHotspots,
 }: {
   meta: Meta;
   sel: Selection;
   result: CrashResult;
   adapted: AdaptResult | null;
   topHotspot: { corridor: string | null; value: number; unit: string } | null;
+  /** Agents on screen in severe heat, out of those drawn. Not a headcount. */
+  visible: { severe: number; total: number };
   onOpenSources: (key?: string) => void;
   onViewAllHotspots: () => void;
 }) {
   const sunBand = band(result.utci_sun_c);
 
   return (
-    <Panel title="Result" icon="📊" width={356} tone="result">
-      <div className="max-h-[calc(100dvh-160px)] overflow-y-auto px-4 pb-4 pt-1">
+    <Panel title="Result" icon="📊" width={320} tone="result">
+      <div className="max-h-[calc(100dvh-136px)] overflow-y-auto px-4 pb-4 pt-1">
         <ThreeState meta={meta} sel={sel} result={result} adapted={adapted} />
 
-        <div className="mt-3 flex items-center gap-2 border-t border-slate-200/80 pt-3">
-          <span className={`text-[14px] font-semibold ${sunBand.cls}`}>
-            {sunBand.label} in sun
-          </span>
-          <span className="text-[12.5px] text-slate-500">
-            · shade {result.utci_shade_c.toFixed(1)} °C
-            ({result.conditions.shade_relief_c.toFixed(1)} °C cooler)
-          </span>
-          <span className="ml-auto flex gap-1">
-            <Badge status="computed" dataKey="utci_c"
-              label="UTCI is computed" onOpen={onOpenSources} />
-            <Badge status="source" dataKey="air_temp_c"
-              label="Air temperature is sourced" onOpen={onOpenSources} />
-          </span>
+        {/* Stacked, not one row: the band name, the shade figure and two
+            badges together do not fit 288px, and wrapped into four lines. */}
+        <div className="mt-3 border-t border-slate-200/80 pt-3">
+          <div className="flex items-center gap-2">
+            <span className={`text-[14px] font-semibold ${sunBand.cls}`}>
+              {sunBand.label} in sun
+            </span>
+            <span className="ml-auto flex shrink-0 gap-1">
+              <Badge status="computed" dataKey="utci_c"
+                label="UTCI is computed" onOpen={onOpenSources} />
+              <Badge status="source" dataKey="air_temp_c"
+                label="Air temperature is sourced" onOpen={onOpenSources} />
+            </span>
+          </div>
+          <div className="text-[12px] text-slate-500">
+            In shade {result.utci_shade_c.toFixed(1)} °C —{" "}
+            {result.conditions.shade_relief_c.toFixed(1)} °C cooler
+          </div>
         </div>
 
         {adapted ? (
@@ -83,8 +105,8 @@ export default function ResultCard({
                     label={meta.interventions[k]?.label ?? k} />
                 ))}
               <PlanRow kind="money"
-                value={`$${fmt(sel.budget - adapted.spent_usd)}`}
-                label="left — under the cheapest remaining unit" />
+                value={efficiency(adapted)}
+                label="severe person-min avoided per $10K" />
             </div>
             {adapted.service_floor.length > 0 && (
               <p className="mt-2 border-t border-emerald-200/70 pt-2 text-[11px]
@@ -118,6 +140,29 @@ export default function ResultCard({
                 + `${Math.abs(result.utci_sun_c - meta.severe_threshold_utci_c).toFixed(1)} °C `
                 + `short of it, so the measure here is cumulative heat load.`}
           </p>
+        )}
+
+        {/* Two different things, kept visibly apart. The metric above is
+            accumulated time; this is a count of icons in the current frame.
+            Reading "950" as "950 people" would be wrong, so the headcount
+            gets its own row and its own units. */}
+        {visible.total > 0 && (
+          <div className="mt-3 flex items-baseline gap-2 border-t
+            border-slate-200/80 pt-3">
+            <span className="text-[11px] uppercase tracking-wider text-slate-500">
+              Visible agents in severe heat
+            </span>
+            <span className="ml-auto text-[15px] font-bold tabular-nums
+              text-slate-900">
+              {visible.severe} / {visible.total}
+            </span>
+            <span className="text-[12px] tabular-nums text-slate-500">
+              ({Math.round((visible.severe / visible.total) * 100)}%)
+            </span>
+            <span title="The share of the representative icons drawn in this
+              frame — not a Pittsburgh population risk rate."
+              className="cursor-help text-[11px] text-slate-400">ⓘ</span>
+          </div>
         )}
 
         {topHotspot && (
@@ -170,13 +215,13 @@ export function Badge({ status, dataKey, onOpen, label }: {
     <button
       onClick={() => onOpen(dataKey)}
       aria-label={`${label}: open the source for this value`}
-      title={`${label} — open the source`}
-      className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase
+      title={`${STATUS_MEANING[status]} — click to open the source`}
+      className={`rounded px-1.5 py-0.5 text-[10px] font-semibold
         tracking-wide transition hover:brightness-95
         focus:outline-none focus:ring-2 focus:ring-amber-400
         ${STATUS_STYLE[status]}`}
     >
-      {STATUS_ABBR[status]}
+      {STATUS_LABEL[status]}
     </button>
   );
 }

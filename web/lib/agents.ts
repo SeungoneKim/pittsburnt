@@ -25,24 +25,45 @@ export interface AgentRoute {
 }
 
 /**
- * One declared time-compression factor for every persona.
+ * Two presentation clocks, not one.
  *
- * Simulation truth stays in metres and seconds: a route's playback duration
- * comes from its real walking minutes, so a mobility-constrained walker at
- * 0.80 m/s visibly takes longer over the same ground than a student at
- * 1.30 m/s. Giving every agent a fixed 14-second loop - as an earlier
- * version did - erased the one property the persona control exists to show.
+ * Earlier versions used a single compression constant for everything, which
+ * forced a choice between a busy street and legible movement: at 90x the map
+ * was populated but every walker teleported, and at 15x each walker was
+ * readable but the street looked deserted. Those are different questions and
+ * they now have different answers.
  *
- * 15x, not the 90x of 2.5. At 90x a 150 m route finished in under two
- * seconds for every cohort, which is too fast to read as motion at all; at
- * 15x the same 150 m takes an Older Adult 11.1 s and a Student 7.7 s, and
- * the difference is visible without being told about it.
+ * FLOW_TIME_COMPRESSION governs how much of the day's pedestrian flow is on
+ * screen at once - the density of the crowd. Travel duration is derived from
+ * it but clamped separately, so a walker crosses the screen slowly enough to
+ * follow however dense the flow gets.
  *
- * Zoom changes pixels per metre only. It never changes ground speed, and
- * this factor changes display time only - every exposure calculation still
- * uses physical minutes.
+ * Neither touches the model. Exposure is always computed from physical route
+ * minutes with no compression at all, and zoom changes pixels per metre and
+ * nothing else.
  */
-export const DEMO_TIME_COMPRESSION = 15;
+export const FLOW_TIME_COMPRESSION = 70;
+
+/** How many representative walkers to show. The spec asks for 60-80. */
+export const VISIBLE_AGENT_TARGET = 72;
+
+/** Longest a single route may take to cross the screen. */
+const MAX_TRAVEL_MS = 18_000;
+
+/**
+ * Per-cohort minimum on-screen travel time.
+ *
+ * A floor is back, but a persona-dependent one, which is the opposite of the
+ * flat 2-second floor removed in 2.6. That floor erased the speed difference
+ * by making every short route equally fast; this one preserves the ordering
+ * it exists to show - a 150 m trip takes an Older Adult 10.0 s against a
+ * Student's 7.5 s - while keeping short routes readable at 70x flow.
+ */
+const MIN_TRAVEL_MS: Record<string, number> = {
+  mobility_constrained: 12_000,
+  older_adults: 10_000,
+};
+const DEFAULT_MIN_TRAVEL_MS = 7_500;
 
 export interface AgentState {
   lon: number;
@@ -52,18 +73,12 @@ export interface AgentState {
   severeSoFar: number;
 }
 
-/** How many agents to show. The spec asks for 40-60 from the active cohort. */
-export const AGENT_COUNT = 50;
-
-/**
- * Playback duration for one route.
- *
- * No floor. The 2-second minimum this used to carry made every short route
- * look equally fast regardless of who was walking it, which is precisely the
- * comparison the persona control exists to make.
- */
-export function visualDuration(minutes: number): number {
-  return (minutes * 60_000) / DEMO_TIME_COMPRESSION;
+/** On-screen travel time for one route, in wall-clock milliseconds. */
+export function visualTravelDuration(routeMinutes: number,
+  persona: string): number {
+  const base = ((routeMinutes * 60_000) / FLOW_TIME_COMPRESSION) * 4;
+  const minimum = MIN_TRAVEL_MS[persona] ?? DEFAULT_MIN_TRAVEL_MS;
+  return Math.min(Math.max(base, minimum), MAX_TRAVEL_MS);
 }
 
 function cumulative(coords: [number, number][]): number[] {
@@ -107,13 +122,15 @@ export function buildRoutes(
     out.push({
       persona: String(p.persona), hour: Number(p.hour),
       minutes, coords, sun, t: cumulative(coords),
-      visualDurationMs: visualDuration(minutes),
+      visualDurationMs: visualTravelDuration(minutes, String(p.persona)),
       // Deterministic stagger: same inputs, same phase offsets, every run.
-      startMs: (out.length * 617) % 9000,
+      // Spread over the longest travel time so arrivals look continuous
+      // rather than arriving as one block.
+      startMs: (out.length * 617) % MAX_TRAVEL_MS,
     });
   }
   // Deterministic selection: the same inputs always show the same walkers.
-  return out.slice(0, AGENT_COUNT);
+  return out.slice(0, VISIBLE_AGENT_TARGET);
 }
 
 /** Progress of one agent at a wall-clock time, from its own real duration. */
