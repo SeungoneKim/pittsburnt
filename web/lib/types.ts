@@ -46,6 +46,9 @@ export interface Meta {
   personas: Persona[];
   scenarios: Scenario[];
   interventions: Record<string, Intervention>;
+  severe_threshold_utci_c: number;
+  heat_load_base_utci_c: number;
+  hero_corridors: string[];
   variants: string[];
   canopy: CanopyMeta | null;
   scope: Scope;
@@ -55,13 +58,39 @@ export interface Meta {
   trip_seed: number;
 }
 
-/** One crash test: an exposure value per segment, in engine segment order. */
+export interface Conditions {
+  air_temp_c: number;
+  rh_pct: number;
+  wind_ms: number;
+  tmrt_sun_c: number;
+  tmrt_shade_c: number;
+  shade_relief_c: number;
+}
+
+/** One crash test, in engine segment order. */
 export interface CrashResult {
-  total: number;
-  total_unweighted: number;
-  heat_index_c: number;
-  exposure: number[];
+  severe_total: number;          // person-minutes at or above UTCI 38 C
+  heat_load_total: number;
+  weighted_severe_total: number;
+  planning_weight: number;
+  utci_sun_c: number;
+  utci_shade_c: number;
+  conditions: Conditions;
+  severe_minutes: number[];
+  heat_load: number[];
   sun: number[];
+  minutes: number[];
+}
+
+/** Corridor vs whole-network impact, always reported together. */
+export interface ImpactScope {
+  label: string;
+  length_km: number;
+  segments: number;
+  before_metric: number;
+  after_metric: number;
+  reduction_pct: number;
+  metric: string;
 }
 
 export interface Placement {
@@ -73,10 +102,15 @@ export interface Placement {
 export interface AdaptResult {
   spent_usd: number;
   counts: Record<string, number>;
-  before_total: number;
-  after_total: number;
+  metric_used: string;
+  before_severe: number;
+  after_severe: number;
+  before_heat_load: number;
+  after_heat_load: number;
   reduction_pct: number;
-  exposure: number[];
+  impact_scopes: ImpactScope[];
+  /** Post-intervention values of whichever metric is in use. */
+  metric_values: number[];
   placements: Placement[];
 }
 

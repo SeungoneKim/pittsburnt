@@ -35,7 +35,7 @@ FALLBACK_BUDGETS = [50_000, 100_000, 250_000, 500_000, 1_000_000]
 VARIANTS: dict[str, list[str] | None] = {
     "all": None,
     "tree": ["tree"],
-    "shade_structure": ["shade_structure"],
+    "shaded_shelter": ["shaded_shelter"],
 }
 # Coordinate precision: ~1 m at this latitude, and it roughly halves the file.
 COORD_DP = 5
@@ -49,6 +49,31 @@ def round_geojson(gj: dict, dp: int = COORD_DP) -> dict:
     for f in gj["features"]:
         f["geometry"]["coordinates"] = walk(f["geometry"]["coordinates"])
     return gj
+
+
+def impact_scopes(e, props, before, after) -> list[dict]:
+    """Corridor and whole-network impact, side by side.
+
+    The spec forbids a bare network percentage: a large local improvement and
+    a small city-wide one are different claims.
+    """
+    seg_len = np.array([props[s]["length_m"] for s in e.seg_ids])
+    corr = np.array([props[s].get("corridor") for s in e.seg_ids])
+    hero = np.isin(corr, CORRIDORS)
+
+    def scope(mask, label):
+        use_sev = float(before.severe_minutes[mask].sum()) > 0
+        b = float((before.severe_minutes if use_sev else before.heat_load)[mask].sum())
+        a = float((after.severe_minutes if use_sev else after.heat_load)[mask].sum())
+        return {"label": label,
+                "length_km": round(float(seg_len[mask].sum()) / 1000, 2),
+                "segments": int(mask.sum()),
+                "before_metric": round(b, 2), "after_metric": round(a, 2),
+                "reduction_pct": round(100.0 * (b - a) / b, 2) if b else 0.0,
+                "metric": "severe_person_minutes" if use_sev else "heat_load"}
+
+    return [scope(hero, "Forbes / Fifth / Craig corridors"),
+            scope(np.ones(len(e.seg_ids), dtype=bool), "Whole modelled network")]
 
 
 def main() -> None:
@@ -136,7 +161,7 @@ def main() -> None:
     # --- precomputed results ---------------------------------------------
     from collections import Counter
 
-    from engine import INTERVENTIONS
+    from engine import HEAT_LOAD_BASE_C, INTERVENTIONS, SEVERE_UTCI_C
     kinds = list(INTERVENTIONS)
     scenarios = list(e.scenarios["scenarios"])
     crash, adapts = {}, {}
@@ -150,10 +175,16 @@ def main() -> None:
             for persona in e.personas:
                 r = e.crash_test(sc, hour, persona)
                 crash[f"{sc}|{hour}|{persona}"] = {
-                    "total": round(r.total, 2),
-                    "total_unweighted": round(r.total_unweighted, 2),
-                    "heat_index_c": e.heat_index_c(sc, hour),
-                    "exposure": [round(float(x), 2) for x in r.exposure],
+                    "severe_total": round(r.severe_total, 2),
+                    "heat_load_total": round(r.heat_load_total, 2),
+                    "weighted_severe_total": round(r.weighted_severe_total, 2),
+                    "planning_weight": r.planning_weight,
+                    "utci_sun_c": r.utci_sun_c,
+                    "utci_shade_c": r.utci_shade_c,
+                    "conditions": r.meta,
+                    "severe_minutes": [round(float(x), 3) for x in r.severe_minutes],
+                    "heat_load": [round(float(x), 2) for x in r.heat_load],
+                    "minutes": [round(float(x), 3) for x in r.minutes],
                 }
     print(f"  precomputed {len(crash)} crash tests "
           f"({len(scenarios)} scenarios x {len(HOURS)} hours x {len(e.personas)} personas)")
@@ -164,7 +195,11 @@ def main() -> None:
                 for budget in FALLBACK_BUDGETS:
                   for vname, kinds_sel in VARIANTS.items():
                     out = adapter.optimize(sc, hour, persona, budget, kinds_sel)
-                    before, after = out["before"].exposure, out["after"].exposure
+                    use_sev = out["before"].severe_total > 0
+                    before = (out["before"].severe_minutes if use_sev
+                              else out["before"].heat_load)
+                    after = (out["after"].severe_minutes if use_sev
+                             else out["after"].heat_load)
                     # An intervention only ever touches a few dozen segments,
                     # so ship the diff rather than a full 2,409-value array -
                     # the difference between an 8 MB bundle and a 100 KB one.
@@ -172,9 +207,14 @@ def main() -> None:
                     adapts[f"{sc}|{hour}|{persona}|{budget}|{vname}"] = {
                         "spent_usd": out["spent_usd"],
                         "counts": out["counts"],
-                        "before_total": round(out["before"].total, 2),
-                        "after_total": round(out["after"].total, 2),
+                        "metric_used": out["metric_used"],
+                        "before_severe": round(out["before"].severe_total, 2),
+                        "after_severe": round(out["after"].severe_total, 2),
+                        "before_heat_load": round(out["before"].heat_load_total, 2),
+                        "after_heat_load": round(out["after"].heat_load_total, 2),
                         "reduction_pct": round(out["reduction_pct"], 2),
+                        "impact_scopes": impact_scopes(e, props, out["before"],
+                                                       out["after"]),
                         "changed": [[int(i), round(float(after[i]), 2)] for i in moved],
                         # [segment index, kind index, how many] - a big budget
                         # puts many units on the same segment, so counting
@@ -206,6 +246,9 @@ def main() -> None:
                               }
                           for k, v in INTERVENTIONS.items()},
         "variants": list(VARIANTS),
+        "severe_threshold_utci_c": SEVERE_UTCI_C,
+        "heat_load_base_utci_c": HEAT_LOAD_BASE_C,
+        "hero_corridors": CORRIDORS,
         "personas": [{"key": p["persona"], "label": p["label"],
                       "speed_mps": p["speed_mps"],
                       "planning_weight": p["planning_weight"],

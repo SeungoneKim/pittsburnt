@@ -27,38 +27,50 @@ export default function AssumptionsPanel({ meta }: { meta: Meta }) {
           <div className="rounded-lg border-l-2 border-red-500 bg-red-50 px-3 py-2">
             <b className="text-red-900">This is not a medical forecast.</b>
             <p className="mt-0.5 text-red-900/80">
-              Pittsburnt reports a modelled Heat Exposure Score in At-risk
-              Pedestrian Minutes. It compares the same city before and after
-              an intervention. It does not predict any individual&apos;s health
-              outcome, and it is not a heatstroke probability.
+              UTCI {meta.severe_threshold_utci_c} °C is a published
+              thermal-stress class, not a diagnosis and not a heatstroke
+              probability. Pittsburnt compares the same simulated people over
+              the same geometry before and after an intervention. It does not
+              predict any individual&apos;s health outcome.
             </p>
           </div>
 
           <Section title="What the score means">
-            Sun exposure raises the apparent temperature (the NWS Heat Index is
-            a shade measure; full sun adds about 8 °C). Severity is scaled 0 at
-            the NWS Caution threshold to 1.0 at Danger, then multiplied by the
-            minutes each population spends on each segment. Slower walkers
+            Thermal stress is <b>UTCI</b>, the Universal Thermal Climate Index,
+            computed from air temperature, humidity, wind and mean radiant
+            temperature. Sun enters through Tmrt: a pedestrian in shade receives
+            diffuse sky radiation, one in sun also receives the direct beam.
+            <br />
+            <br />
+            The headline number counts <b>person-minutes at or above UTCI{" "}
+            {meta.severe_threshold_utci_c} °C</b>, the published &ldquo;Very
+            Strong Heat Stress&rdquo; class. Heat load is a secondary measure
+            that also counts time below that threshold. Slower walkers
             accumulate more exposure because they are outside longer — there is
-            no physiological multiplier.
+            no physiological multiplier anywhere in the model.
           </Section>
 
           <Section title="Planning weight">
             Weighting a vulnerable population above the average walker is a
             statement about who a heat plan should protect first, not a claim
-            about anyone&apos;s physiology. Unweighted exposure is reported
-            alongside every weighted figure.
+            about anyone&apos;s physiology. The primary number is always
+            <b> unweighted</b>; the weighted figure is shown beside it, clearly
+            labelled, and never substituted for it.
           </Section>
 
           <Section title="Climate scenarios">
-            <b>Today</b> is observed, not modelled: {m.baseline}.<br />
+            <b>Observed hot-day baseline</b> — observed, not modelled, and not
+            current weather: {m.baseline}. No live weather service is connected.
+            <br />
             <span className="text-slate-500">{m.baseline_source}</span>
             <br />
-            <b>Futures</b>: {m.projection_source}.
+            <b>Futures</b>: {m.projection_source}. Windows:{" "}
+            {Object.values(
+              (m as unknown as { projection_windows?: Record<string, string> })
+                .projection_windows ?? {},
+            ).join(" and ")}. Nothing is extrapolated.
             <br />
-            <span className="text-amber-700">{m.extrapolation_note}</span>
-            <br />
-            {m.humidity_assumption}.
+            {m.longwave_assumption}.
           </Section>
 
           <Section title="Shade and canopy">

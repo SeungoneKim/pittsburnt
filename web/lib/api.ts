@@ -11,7 +11,7 @@
  * results exist for the preset budgets only.
  */
 import type {
-  AdaptResult, CrashResult, Meta, Placement, Selection, SourceMode,
+  AdaptResult, CrashResult, ImpactScope, Meta, Placement, Selection, SourceMode,
 } from "./types";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -58,7 +58,7 @@ async function statik<T>(file: string): Promise<T> {
 }
 
 // The static bundle is fetched once and reused for every subsequent answer.
-let bundle: {
+const bundle: {
   crash?: { sun_by_hour: Record<string, number[]>; results: Record<string, CrashResult> };
   adapts?: { kinds: string[]; variants: string[]; results: Record<string, RawAdapt> };
   meta?: Meta;
@@ -67,9 +67,13 @@ let bundle: {
 interface RawAdapt {
   spent_usd: number;
   counts: Record<string, number>;
-  before_total: number;
-  after_total: number;
+  metric_used: string;
+  before_severe: number;
+  after_severe: number;
+  before_heat_load: number;
+  after_heat_load: number;
   reduction_pct: number;
+  impact_scopes: ImpactScope[];
   changed: [number, number][];
   placements: [number, number, number][];
 }
@@ -97,9 +101,13 @@ async function adaptBundle() {
 
 export async function crashTest(sel: Selection): Promise<CrashResult> {
   const live = await tryApi<{
-    total_exposure: number; total_exposure_unweighted: number;
-    heat_index_c: number;
-    segments: { exposure: number; sun_exposure: number }[];
+    severe_person_minutes: number; heat_load: number;
+    weighted_severe_person_minutes: number; planning_weight: number;
+    conditions: CrashResult["conditions"] & {
+      utci_sun_c: number; utci_shade_c: number;
+    };
+    segments: { severe_minutes: number; heat_load: number;
+                sun_exposure: number; minutes: number }[];
   }>("/crash-test", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -110,12 +118,17 @@ export async function crashTest(sel: Selection): Promise<CrashResult> {
 
   if (live) {
     setMode("live");
+    const { utci_sun_c, utci_shade_c, ...cond } = live.conditions;
     return {
-      total: live.total_exposure,
-      total_unweighted: live.total_exposure_unweighted,
-      heat_index_c: live.heat_index_c,
-      exposure: live.segments.map((s) => s.exposure),
+      severe_total: live.severe_person_minutes,
+      heat_load_total: live.heat_load,
+      weighted_severe_total: live.weighted_severe_person_minutes,
+      planning_weight: live.planning_weight,
+      utci_sun_c, utci_shade_c, conditions: cond,
+      severe_minutes: live.segments.map((s) => s.severe_minutes),
+      heat_load: live.segments.map((s) => s.heat_load),
       sun: live.segments.map((s) => s.sun_exposure),
+      minutes: live.segments.map((s) => s.minutes),
     };
   }
 
@@ -128,9 +141,11 @@ export async function crashTest(sel: Selection): Promise<CrashResult> {
 
 export async function adapt(sel: Selection, before: CrashResult): Promise<AdaptResult> {
   const live = await tryApi<{
-    spent_usd: number; counts: Record<string, number>;
-    before_total: number; after_total: number; reduction_pct: number;
-    segments: { exposure: number }[];
+    spent_usd: number; counts: Record<string, number>; metric_used: string;
+    before_severe: number; after_severe: number;
+    before_heat_load: number; after_heat_load: number;
+    reduction_pct: number; impact_scopes: ImpactScope[];
+    segments: { severe_minutes: number; heat_load: number }[];
     placements: { seg_id: string; kind: string }[];
   }>("/adapt", {
     method: "POST",
@@ -151,11 +166,17 @@ export async function adapt(sel: Selection, before: CrashResult): Promise<AdaptR
       if (cur) cur.count += 1;
       else tally.set(k, { seg_id: p.seg_id, kind: p.kind, count: 1 });
     }
+    const useSevere = live.metric_used === "severe_person_minutes";
     return {
       spent_usd: live.spent_usd, counts: live.counts,
-      before_total: live.before_total, after_total: live.after_total,
+      metric_used: live.metric_used,
+      before_severe: live.before_severe, after_severe: live.after_severe,
+      before_heat_load: live.before_heat_load,
+      after_heat_load: live.after_heat_load,
       reduction_pct: live.reduction_pct,
-      exposure: live.segments.map((s) => s.exposure),
+      impact_scopes: live.impact_scopes,
+      metric_values: live.segments.map((s) =>
+        useSevere ? s.severe_minutes : s.heat_load),
       placements: [...tally.values()],
     };
   }
@@ -166,12 +187,15 @@ export async function adapt(sel: Selection, before: CrashResult): Promise<AdaptR
     `${sel.scenario}|${sel.hour}|${sel.persona}|${sel.budget}|${sel.variant}`];
   if (!r) throw new Error("no precomputed adapt for that budget");
   // Static results ship as a diff against the baseline; rebuild the full array.
-  const exposure = before.exposure.slice();
-  for (const [i, v] of r.changed) exposure[i] = v;
+  const useSevere = r.metric_used === "severe_person_minutes";
+  const metric_values = (useSevere ? before.severe_minutes : before.heat_load).slice();
+  for (const [i, v] of r.changed) metric_values[i] = v;
   return {
-    spent_usd: r.spent_usd, counts: r.counts,
-    before_total: r.before_total, after_total: r.after_total,
-    reduction_pct: r.reduction_pct, exposure,
+    spent_usd: r.spent_usd, counts: r.counts, metric_used: r.metric_used,
+    before_severe: r.before_severe, after_severe: r.after_severe,
+    before_heat_load: r.before_heat_load, after_heat_load: r.after_heat_load,
+    reduction_pct: r.reduction_pct, impact_scopes: r.impact_scopes,
+    metric_values,
     placements: r.placements.map(([si, ki, n]) => ({
       seg_id: meta.seg_ids[si], kind: b.kinds[ki], count: n,
     })),

@@ -30,17 +30,18 @@ async function loadRenderer(): Promise<GLNamespace> {
 }
 
 /**
- * Colour ramp for modelled exposure: low -> elevated -> high -> hotspot.
- * Red is the top of the scale, per the brief. Values are normalised against
- * the *baseline* peak so that an intervention visibly cools the map rather
- * than rescaling itself back to red.
+ * Thermal colour ramp, keyed to ABSOLUTE UTCI, not to a percentile of the
+ * current run. The stress classes are published, so a quiet scenario must
+ * look quiet rather than renormalising itself back to red. Red begins at
+ * 38 C, the "Very Strong Heat Stress" threshold.
  */
-const RAMP: [number, string][] = [
-  [0.0, "#2c7bb6"],
-  [0.25, "#abd9e9"],
-  [0.5, "#ffffbf"],
-  [0.75, "#fdae61"],
-  [1.0, "#d7191c"],
+const UTCI_RAMP: [number, string][] = [
+  [20, "#9fb4c4"],     // no thermal stress - deliberately muted
+  [26, "#b7c3bd"],     // moderate
+  [32, "#e2d3a4"],     // strong
+  [37.99, "#efb183"],  // still below the threshold
+  [38, "#d7301f"],     // VERY STRONG - a hard step, not a gradient
+  [46, "#7f0000"],     // extreme
 ];
 
 /** Basemap. Without a Mapbox token we fall back to open raster tiles, so a
@@ -70,7 +71,6 @@ interface Props {
   meta: Meta;
   result: CrashResult | null;
   adapted: AdaptResult | null;
-  scaleMax: number;
   hour: Hour;
   layers: {
     shadow: boolean; canopy: boolean; trees: boolean;
@@ -80,7 +80,7 @@ interface Props {
 }
 
 export default function MapView({
-  meta, result, adapted, scaleMax, hour, layers, onSegmentClick,
+  meta, result, adapted, hour, layers, onSegmentClick,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const map = useRef<GLMap | null>(null);
@@ -220,15 +220,14 @@ export default function MapView({
             "line-color": [
               "case",
               ["==", ["feature-state", "scored"], true],
-              ["interpolate", ["linear"], ["feature-state", "intensity"],
-                ...RAMP.flatMap(([stop, colour]) => [stop, colour])],
+              ["interpolate", ["linear"], ["feature-state", "utci"],
+                ...UTCI_RAMP.flatMap(([stop, colour]) => [stop, colour])],
               "rgba(0,0,0,0)",
             ],
-            "line-width": [
-              "interpolate", ["linear"], ["zoom"],
-              13, ["+", 1.4, ["*", 2.2, ["coalesce", ["feature-state", "intensity"], 0]]],
-              17, ["+", 3.0, ["*", 5.0, ["coalesce", ["feature-state", "intensity"], 0]]],
-            ],
+            // A zoom expression may not contain feature-state, so width is
+            // zoom-only and the thermal class is carried entirely by colour.
+            "line-width": ["interpolate", ["linear"], ["zoom"],
+              13, 2.2, 15, 3.4, 17, 6],
             "line-opacity": 0.95,
           },
         });
@@ -238,6 +237,22 @@ export default function MapView({
           type: "geojson",
           data: { type: "FeatureCollection", features: [] },
         });
+        // Segments in the Very Strong band, drawn over the tint so the
+        // threshold reads as a class rather than as one more shade of orange.
+        // feature-state is not permitted in a layer filter, only in paint,
+        // so visibility is driven through opacity rather than a filter.
+        m.addLayer({
+          id: "severe", type: "line", source: "segments",
+          paint: {
+            "line-color": "#d7301f",
+            "line-width": ["interpolate", ["linear"], ["zoom"], 13, 3.2, 17, 8],
+            "line-opacity": [
+              "case",
+              [">=", ["coalesce", ["feature-state", "utci"], 0], 38], 0.95, 0,
+            ],
+          },
+        });
+
         m.addLayer({
           id: "placed", type: "line", source: "placed",
           layout: { "line-cap": "round" },
@@ -288,28 +303,35 @@ export default function MapView({
   useEffect(() => {
     const m = map.current;
     if (!m || !ready.current) return;
-    const active = adapted?.exposure ?? result?.exposure;
-    const sun = result?.sun;
-
-    if (!active) {
+    if (!result) {
       for (let i = 0; i < meta.seg_ids.length; i += 1) {
-        m.setFeatureState({ source: "segments", id: i }, { scored: false, intensity: 0 });
+        m.setFeatureState({ source: "segments", id: i }, { scored: false, utci: 0 });
       }
       return;
     }
-    const peak = scaleMax || 1;
-    for (let i = 0; i < active.length; i += 1) {
-      // A segment nobody walks has no exposure to report. Colouring it at the
-      // bottom of the ramp would read as "safe" when it really means "no
-      // modelled pedestrian demand", so it stays on the grey base layer.
+    const sun0 = result.sun;
+    const severe = adapted?.metric_values ?? result.severe_minutes;
+    const uSun = result.utci_sun_c;
+    const uShade = result.utci_shade_c;
+
+    for (let i = 0; i < meta.seg_ids.length; i += 1) {
+      // After ADAPT, a segment's sun fraction has fallen; recover it from the
+      // change in its severe minutes so the map cools where shade was added.
+      let sun = sun0[i];
+      if (adapted && result.severe_minutes[i] > 0) {
+        sun = sun0[i] * (severe[i] / result.severe_minutes[i]);
+      }
+      const utci = sun * uSun + (1 - sun) * uShade;
+      // A segment nobody walks has no human exposure to report; it stays on
+      // the grey base layer rather than being coloured as if it were safe.
       m.setFeatureState({ source: "segments", id: i }, {
-        scored: active[i] > 0,
-        intensity: Math.min(1, active[i] / peak),
-        exposure: active[i],
-        sun: sun?.[i] ?? 0,
+        scored: result.minutes[i] > 0,
+        utci,
+        severe: severe[i],
+        sun,
       });
     }
-  }, [result, adapted, scaleMax, meta.seg_ids.length]);
+  }, [result, adapted, meta.seg_ids.length]);
 
   // --- highlight where money was spent ------------------------------------
   useEffect(() => {

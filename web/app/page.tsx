@@ -86,29 +86,23 @@ export default function Page() {
       buildings: false, trips: false });
   }, []);
 
-  // Colour scale is pinned to the *baseline* run so ADAPT visibly cools the
-  // map instead of renormalising itself straight back to red.
-  //
-  // Anchored on the 95th percentile of segments that actually carry people,
-  // not the maximum: exposure is heavily long-tailed, so a max-anchored ramp
-  // pushes almost the whole network into the bottom colour and hides the
-  // gradient the map exists to show. The top few per cent saturate at red,
-  // which is what "hotspot" should mean.
-  const scaleMax = useMemo(() => {
-    if (!result) return 1;
-    const live = result.exposure.filter((v) => v > 0).sort((a, b) => a - b);
-    if (!live.length) return 1;
-    return live[Math.floor(live.length * 0.95)] || live[live.length - 1];
-  }, [result]);
-
+  // Human-exposure ranking. Deliberately separate from the map's colour:
+  // the hottest street is not necessarily where people accumulate the most
+  // severe minutes, and a percentile must never redefine a stress class.
   const hotspots = useMemo(() => {
     if (!meta || !result) return [];
-    const active = adapted?.exposure ?? result.exposure;
+    const useSevere = result.severe_total > 0;
+    const active = adapted?.metric_values
+      ?? (useSevere ? result.severe_minutes : result.heat_load);
     return active
-      .map((exposure, i) => ({
-        segId: meta.seg_ids[i], corridor: corridors[meta.seg_ids[i]] ?? null, exposure,
+      .map((value, i) => ({
+        segId: meta.seg_ids[i],
+        corridor: corridors[meta.seg_ids[i]] ?? null,
+        value,
+        unit: useSevere ? "severe min" : "heat load",
       }))
-      .sort((a, b) => b.exposure - a.exposure)
+      .filter((h) => h.value > 0)
+      .sort((a, b) => b.value - a.value)
       .slice(0, 10);
   }, [meta, result, adapted, corridors]);
 
@@ -150,7 +144,6 @@ export default function Page() {
           meta={meta}
           result={result}
           adapted={adapted}
-          scaleMax={scaleMax}
           hour={sel.hour}
           layers={layers}
         />
@@ -173,24 +166,31 @@ export default function Page() {
           {result && (
             <div className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 rounded-lg border border-slate-200 bg-white/95 px-3 py-2 shadow backdrop-blur">
               <div className="mb-1 text-[10px] uppercase tracking-wider text-slate-500">
-                Modelled exposure
+                Thermal stress (UTCI)
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-[10px] text-slate-600">low</span>
                 <div
-                  className="h-2 w-40 rounded-full"
+                  className="h-2 w-44 rounded-full"
                   style={{
                     background:
-                      "linear-gradient(90deg,#2c7bb6,#abd9e9,#ffffbf,#fdae61,#d7191c)",
+                      "linear-gradient(90deg,#9fb4c4 0%,#b7c3bd 23%,#e2d3a4 46%,"
+                      + "#efb183 69%,#d7301f 69.1%,#7f0000 100%)",
                   }}
                 />
-                <span className="text-[10px] text-slate-600">hotspot</span>
                 {adapted && (
-                  <span className="ml-2 flex items-center gap-1 text-[10px] text-emerald-700">
+                  <span className="ml-1 flex items-center gap-1 text-[10px] text-emerald-700">
                     <span className="inline-block h-0.5 w-4 bg-emerald-600" />
                     shade added
                   </span>
                 )}
+              </div>
+              <div className="mt-0.5 flex w-44 justify-between text-[9px] tabular-nums text-slate-500">
+                <span>20</span><span>26</span><span>32</span>
+                <span className="font-semibold text-red-700">38 °C</span>
+                <span>46</span>
+              </div>
+              <div className="text-[10px] text-slate-600">
+                red = Very Strong Heat Stress
               </div>
             </div>
           )}

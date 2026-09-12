@@ -1,31 +1,38 @@
-"""The exposure engine: turn a scenario into a score per street segment.
+"""The exposure engine: turn a scenario into a thermal-stress score per segment.
 
-The brief's MVP formula is
+Thermal index is UTCI, the Universal Thermal Climate Index. The previous
+model used the NWS Heat Index plus a flat "+8 C x sun exposure", which was an
+assumption presented as physics: the Heat Index is defined in shade, and the
+8 C was a constant chosen by hand.
 
-    Exposure = heat severity x sun exposure x time spent x planning weight
+Under UTCI, sun enters where it physically belongs. A pedestrian in shade
+receives diffuse sky radiation; one in sun also receives the direct beam.
+That difference drives mean radiant temperature, and UTCI follows from it.
+Scenario files carry both ends - UTCI in full sun and in full shade, at each
+hour - so the engine only has to mix them.
 
-We follow it with one deliberate change. Taken literally, multiplying by sun
-exposure makes a fully shaded segment score exactly zero - which would say a
-pedestrian accumulates no heat burden in the shade, and would make any
-intervention look infinitely effective. Instead, sun enters where it
-physically belongs: the NWS Heat Index is a *shade* measure, and standing in
-full sun adds roughly 8 C to apparent temperature. So sun raises the heat
-index, and severity is computed from the result.
+sun_exposure(segment, hour) is a *spatial fraction*: how much of that
+segment's length is unshaded. So a pedestrian walking it spends that fraction
+of their time in sun and the rest in shade, and their exposure is the sum of
+the two. That is what makes shade act smoothly rather than as a switch.
 
-    effective heat index = HI(scenario, hour) + 8 C x sun_exposure(seg, hour)
-    exposure(seg)        = severity(effective HI) x minutes(seg, persona, hour)
+Metrics, following the revision spec:
 
-The score is reported as At-risk Pedestrian Minutes. It is a relative
-measure for comparing the same city before and after an intervention, not a
-medical prediction for any person.
+    severe_person_minutes  person-minutes at or above UTCI 38 C, the
+                           published "Very Strong Heat Stress" class.
+                           PRIMARY, and unweighted.
+    heat_load              SUM(max(UTCI - 26, 0) x person_minutes), a
+                           cumulative burden that also counts time below the
+                           severe threshold.
+    weighted_*             the same figures under city planning priority.
+                           Reported alongside, never as the primary number.
 
-All of the heavy geometry is precomputed, so a crash test is array
-arithmetic over cached arrays and returns in milliseconds.
+Neither is a medical prediction. UTCI 38 C is a thermal-stress category.
 """
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -33,29 +40,25 @@ import numpy as np
 ROOT = Path(__file__).resolve().parent.parent
 CACHE = ROOT / "data" / "cache"
 
-# Full sun versus shade, in degrees C of apparent temperature. The NWS notes
-# that its Heat Index is measured in shade and that full sunshine can raise
-# the apparent temperature by up to about 8 C (15 F).
-FULL_SUN_BONUS_C = 8.0
-
-HI_CAUTION_C = 27.0
-HI_DANGER_C = 39.0
-
-
-def severity(hi_c: np.ndarray) -> np.ndarray:
-    """0 at the NWS Caution onset, 1.0 at Danger; unbounded above."""
-    return np.clip(hi_c - HI_CAUTION_C, 0, None) / (HI_DANGER_C - HI_CAUTION_C)
+SEVERE_UTCI_C = 38.0        # "Very Strong Heat Stress"
+HEAT_LOAD_BASE_C = 26.0     # onset of "Moderate Heat Stress"
 
 
 @dataclass
 class Result:
     seg_ids: list[str]
-    exposure: np.ndarray          # at-risk pedestrian minutes, per segment
-    exposure_unweighted: np.ndarray
-    sun: np.ndarray               # sun exposure actually used, per segment
+    utci_c: np.ndarray            # effective UTCI per segment
+    severe_minutes: np.ndarray    # person-minutes at or above 38 C
+    heat_load: np.ndarray
+    sun: np.ndarray
     minutes: np.ndarray
-    total: float
-    total_unweighted: float
+    utci_sun_c: float = 0.0
+    utci_shade_c: float = 0.0
+    severe_total: float = 0.0
+    heat_load_total: float = 0.0
+    weighted_severe_total: float = 0.0
+    planning_weight: float = 1.0
+    meta: dict = field(default_factory=dict)
 
 
 class Engine:
@@ -73,7 +76,6 @@ class Engine:
         self.sun_exposure = sun["sun_exposure"].astype(np.float32)
         self.shade_bldg = sun["shade_bldg"].astype(np.float32)
         self.shade_tree = sun["shade_tree"].astype(np.float32)
-        self.canopy_block = float(sun["canopy_block"])
         self.minutes = mins["minutes"].astype(np.float32)
 
         if [str(s) for s in mins["seg_ids"]] != self.seg_ids:
@@ -97,12 +99,15 @@ class Engine:
             raise ValueError(f"persona must be one of {self.personas}")
         return self.personas.index(persona)
 
-    def heat_index_c(self, scenario: str, hour: int) -> float:
+    def conditions(self, scenario: str, hour: int) -> dict:
         sc = self.scenarios["scenarios"].get(scenario)
         if sc is None:
             raise ValueError(f"scenario must be one of "
                              f"{list(self.scenarios['scenarios'])}")
-        return float(sc["hours"][str(hour)]["heat_index_c"])
+        row = sc["hours"].get(str(hour))
+        if row is None:
+            raise ValueError(f"hour must be one of {self.hours}")
+        return row
 
     # -- the crash test -----------------------------------------------------
 
@@ -113,66 +118,85 @@ class Engine:
         sun_delta is a per-segment reduction in sun exposure contributed by
         interventions, in [0, 1]. Passing None gives the baseline city.
         """
-        hi_idx = self.hour_index(hour)
+        hi = self.hour_index(hour)
         p_idx = self.persona_index(persona)
+        cond = self.conditions(scenario, hour)
 
-        sun = self.sun_exposure[:, hi_idx].astype(np.float64)
+        sun = self.sun_exposure[:, hi].astype(np.float64)
         if sun_delta is not None:
             sun = np.clip(sun - sun_delta, 0.0, 1.0)
+        minutes = self.minutes[:, p_idx, hi].astype(np.float64)
 
-        hi = self.heat_index_c(scenario, hour) + FULL_SUN_BONUS_C * sun
-        sev = severity(hi)
-        minutes = self.minutes[:, p_idx, hi_idx].astype(np.float64)
+        u_sun = float(cond["utci_sun_c"])
+        u_shade = float(cond["utci_shade_c"])
 
-        unweighted = sev * minutes
-        weighted = unweighted * self.weights.get(persona, 1.0)
+        # Time splits between sun and shade in proportion to the unshaded
+        # fraction of the segment, so each part is scored on its own UTCI.
+        min_sun, min_shade = minutes * sun, minutes * (1.0 - sun)
+        severe = (min_sun * (u_sun >= SEVERE_UTCI_C)
+                  + min_shade * (u_shade >= SEVERE_UTCI_C))
+        load = (min_sun * max(u_sun - HEAT_LOAD_BASE_C, 0.0)
+                + min_shade * max(u_shade - HEAT_LOAD_BASE_C, 0.0))
+
+        # Effective UTCI for display and for the thermal colour threshold.
+        utci = sun * u_sun + (1.0 - sun) * u_shade
+        weight = self.weights.get(persona, 1.0)
+
         return Result(
-            seg_ids=self.seg_ids, exposure=weighted,
-            exposure_unweighted=unweighted, sun=sun, minutes=minutes,
-            total=float(weighted.sum()), total_unweighted=float(unweighted.sum()),
+            seg_ids=self.seg_ids, utci_c=utci, severe_minutes=severe,
+            heat_load=load, sun=sun, minutes=minutes,
+            utci_sun_c=u_sun, utci_shade_c=u_shade,
+            severe_total=float(severe.sum()),
+            heat_load_total=float(load.sum()),
+            weighted_severe_total=float(severe.sum() * weight),
+            planning_weight=weight,
+            meta={"air_temp_c": cond["air_temp_c"], "rh_pct": cond["rh_pct"],
+                  "wind_ms": cond["wind_ms"],
+                  "tmrt_sun_c": cond["tmrt_sun_c"],
+                  "tmrt_shade_c": cond["tmrt_shade_c"],
+                  "shade_relief_c": cond["shade_relief_c"]},
         )
 
     def hotspots(self, res: Result, top: int = 20) -> list[dict]:
-        order = np.argsort(-res.exposure)[:top]
+        """Ranked by human exposure, which is not the same as by temperature.
+
+        The hottest street is not necessarily the one where people accumulate
+        the most severe minutes; this ranks the latter, while the map colours
+        the former.
+        """
+        rank_by = res.severe_minutes if res.severe_minutes.sum() > 0 else res.heat_load
+        order = np.argsort(-rank_by)[:top]
         return [{"seg_id": res.seg_ids[i],
-                 "exposure": round(float(res.exposure[i]), 3),
+                 "severe_minutes": round(float(res.severe_minutes[i]), 3),
+                 "heat_load": round(float(res.heat_load[i]), 2),
+                 "utci_c": round(float(res.utci_c[i]), 2),
                  "sun_exposure": round(float(res.sun[i]), 3),
                  "minutes": round(float(res.minutes[i]), 2)} for i in order]
 
 
 # --- interventions ---------------------------------------------------------
 
-# Cost and shading reach of each intervention the ADAPT step can place.
-# Costs are planning-order-of-magnitude figures for a prototype, and are
-# surfaced in the UI as assumptions rather than quoted as procurement prices.
 INTERVENTIONS = {
     "tree": {
         "label": "Street tree",
         "cost_usd": 1200,
         # A mature street tree casts roughly its crown diameter along the
-        # footway. 4 m crown radius is the median of the mature trees in the
-        # City inventory, so a tree covers about 8 m of pavement.
+        # footway; 4 m crown radius is the median mature crown in the City
+        # inventory, so one tree covers about 8 m of pavement.
         "shade_m": 8.0,
-        # Canopy transmits some direct beam; it is not an opaque roof.
-        "block": 0.85,
+        "block": 0.85,   # canopy transmits some direct beam
     },
-    "shade_structure": {
-        "label": "Shade structure",
-        "cost_usd": 25000,
-        "shade_m": 15.0,
-        "block": 0.95,   # solid canopy
+    "shaded_shelter": {
+        "label": "Shaded waiting shelter",
+        "cost_usd": 15000,
+        "shade_m": 4.0,
+        "block": 0.95,   # solid roof
     },
 }
 
 
 class Adapter:
-    """Places interventions and measures what they buy.
-
-    Interventions act by removing sun exposure from a segment: a unit shades
-    `shade_m` of pavement, and can only remove sun that was there to begin
-    with. That keeps the effect bounded by physics rather than by a tuning
-    constant.
-    """
+    """Places interventions and measures what they buy."""
 
     def __init__(self, engine: Engine, lengths: np.ndarray):
         self.e = engine
@@ -191,35 +215,43 @@ class Adapter:
 
     def optimize(self, scenario: str, hour: int, persona: str, budget_usd: float,
                  kinds: list[str] | None = None) -> dict:
-        """Greedy placement by exposure reduction per dollar.
+        """Greedy placement by severe-minutes avoided per dollar.
 
-        At each step, every candidate segment is asked what one more unit
-        would save; the best value-for-money unit is bought. Greedy is the
-        right shape here because each unit has diminishing returns on its own
-        segment (it can only remove the sun that is left), so the marginal
-        gains fall as a segment fills up.
+        Objective order follows the spec: maximise severe person-minutes
+        avoided first, then cumulative heat load avoided, then minimise cost.
+        Heat load breaks ties when no candidate can cross the severe
+        threshold - without it the optimiser would be blind whenever the
+        whole scenario sits below 38 C.
+
+        This is a simulation-recommended allocation, not a proven optimum:
+        greedy explores one unit at a time rather than every combination.
         """
         kinds = kinds or list(INTERVENTIONS)
         hi = self.e.hour_index(hour)
         p = self.e.persona_index(persona)
+        cond = self.e.conditions(scenario, hour)
 
         base = self.e.crash_test(scenario, hour, persona)
-        hi_base = self.e.heat_index_c(scenario, hour)
         minutes = self.e.minutes[:, p, hi].astype(np.float64)
-        weight = self.e.weights.get(persona, 1.0)
         sun0 = self.e.sun_exposure[:, hi].astype(np.float64)
+
+        u_sun, u_shade = float(cond["utci_sun_c"]), float(cond["utci_shade_c"])
+        sev_sun = float(u_sun >= SEVERE_UTCI_C)
+        sev_shade = float(u_shade >= SEVERE_UTCI_C)
+        load_sun = max(u_sun - HEAT_LOAD_BASE_C, 0.0)
+        load_shade = max(u_shade - HEAT_LOAD_BASE_C, 0.0)
+
+        def score(sun):
+            ms, mh = minutes * sun, minutes * (1.0 - sun)
+            return (ms * sev_sun + mh * sev_shade,
+                    ms * load_sun + mh * load_shade)
 
         placed = {k: np.zeros(len(self.e.seg_ids), dtype=int) for k in kinds}
         caps = {k: self.max_units(k) for k in kinds}
         spent, log = 0.0, []
 
-        def exposure_at(sun):
-            return severity(hi_base + FULL_SUN_BONUS_C * sun) * minutes * weight
-
         cur_sun = sun0.copy()
-        cur_exp = exposure_at(cur_sun)
-
-        # Only segments that carry people and see sun are worth shading.
+        cur_sev, cur_load = score(cur_sun)
         live = (minutes > 0) & (sun0 > 0.01)
 
         while True:
@@ -231,39 +263,50 @@ class Adapter:
                 room = live & (placed[k] < caps[k])
                 if not room.any():
                     continue
-                trial_units = placed[k] + room.astype(int)
+                others = sum(self.sun_delta(j, placed[j], hi)
+                             for j in kinds if j != k)
                 trial_sun = np.clip(
-                    sun0 - self.sun_delta(k, trial_units, hi)
-                    - sum(self.sun_delta(j, placed[j], hi) for j in kinds if j != k),
-                    0.0, 1.0)
-                gain = cur_exp - exposure_at(trial_sun)
-                gain[~room] = -np.inf
-                value = gain / spec["cost_usd"]
+                    sun0 - self.sun_delta(k, placed[k] + room.astype(int), hi)
+                    - others, 0.0, 1.0)
+                t_sev, t_load = score(trial_sun)
+                gain_sev = cur_sev - t_sev
+                gain_load = cur_load - t_load
+                gain_sev[~room] = -np.inf
+                gain_load[~room] = -np.inf
+                # Primary objective, with heat load as the tie-break.
+                value = (gain_sev + 1e-6 * gain_load) / spec["cost_usd"]
                 i = int(np.argmax(value))
-                if not np.isfinite(value[i]) or gain[i] <= 0:
+                if not np.isfinite(value[i]) or value[i] <= 0:
                     continue
                 if best is None or value[i] > best[0]:
-                    best = (value[i], k, i, gain[i], spec["cost_usd"])
+                    best = (value[i], k, i, gain_sev[i], gain_load[i],
+                            spec["cost_usd"])
             if best is None:
                 break
 
-            _, kind, idx, gain, cost = best
+            _, kind, idx, g_sev, g_load, cost = best
             placed[kind][idx] += 1
             spent += cost
             log.append({"seg_id": self.e.seg_ids[idx], "kind": kind,
-                        "cost_usd": cost, "exposure_saved": round(float(gain), 4)})
+                        "cost_usd": cost,
+                        "severe_minutes_saved": round(float(g_sev), 4),
+                        "heat_load_saved": round(float(g_load), 3)})
             cur_sun = np.clip(
-                sun0 - sum(self.sun_delta(j, placed[j], hi) for j in kinds), 0.0, 1.0)
-            cur_exp = exposure_at(cur_sun)
+                sun0 - sum(self.sun_delta(j, placed[j], hi) for j in kinds),
+                0.0, 1.0)
+            cur_sev, cur_load = score(cur_sun)
 
         total_delta = sun0 - cur_sun
         after = self.e.crash_test(scenario, hour, persona, sun_delta=total_delta)
+        denom = base.severe_total or base.heat_load_total or 1.0
+        num = ((base.severe_total - after.severe_total) if base.severe_total
+               else (base.heat_load_total - after.heat_load_total))
         return {
             "budget_usd": budget_usd, "spent_usd": spent,
             "placements": log,
             "counts": {k: int(v.sum()) for k, v in placed.items()},
             "before": base, "after": after,
             "sun_delta": total_delta,
-            "reduction_pct": (100.0 * (base.total - after.total) / base.total
-                              if base.total else 0.0),
+            "reduction_pct": 100.0 * num / denom,
+            "metric_used": "severe_person_minutes" if base.severe_total else "heat_load",
         }

@@ -226,6 +226,43 @@ def verify_trips() -> None:
     check("trip seed recorded", "seed" in meta, f"seed {meta.get('seed')}")
 
 
+def verify_scenarios() -> None:
+    path = CACHE / "scenarios.json"
+    if not path.exists():
+        check("scenarios.json exists", False, "missing - run step06")
+        return
+    sc = json.loads(path.read_text())
+    scen = sc["scenarios"]
+    check("scenarios.json exists", True, " / ".join(scen))
+    check("baseline is named as observed, not as today",
+          scen["baseline"]["label"].lower().startswith("observed"),
+          scen["baseline"]["label"])
+    check("no scenario is extrapolated",
+          not any(v.get("is_extrapolated") for v in scen.values()),
+          " / ".join(f"{k}:{v['delta_c']:+.2f}C" for k, v in scen.items()))
+    check("futures use the named CMIP6-LOCA2 windows",
+          {v["ensemble"]["window"] for k, v in scen.items() if v["ensemble"]}
+          == {"2025-2049", "2050-2074"},
+          " / ".join(f"{k} {v['ensemble']['window']}"
+                     for k, v in scen.items() if v["ensemble"]))
+    check("every hour carries the UTCI inputs",
+          all(all(k in row for k in
+                  ("air_temp_c", "rh_pct", "wind_ms", "ghi_wm2",
+                   "utci_sun_c", "utci_shade_c", "tmrt_sun_c"))
+              for v in scen.values() for row in v["hours"].values()),
+          "temp / RH / wind / radiation / Tmrt / UTCI")
+    # Sun must always be hotter than shade, at every hour of every scenario.
+    pairs = [(row["utci_sun_c"], row["utci_shade_c"])
+             for v in scen.values() for row in v["hours"].values()]
+    check("sun is hotter than shade everywhere",
+          all(a > b for a, b in pairs),
+          f"relief {min(a-b for a, b in pairs):.1f}-{max(a-b for a, b in pairs):.1f} C")
+    check("warming increases with the horizon",
+          scen["baseline"]["delta_c"] < scen["heat2035"]["delta_c"]
+          < scen["heat2050"]["delta_c"],
+          " < ".join(f"{v['delta_c']:+.2f}" for v in scen.values()))
+
+
 def main() -> int:
     verify_segments()
     verify_edge_map()
@@ -233,6 +270,7 @@ def main() -> int:
     verify_shadows()
     verify_trees()
     verify_trips()
+    verify_scenarios()
 
     width = max(len(n) for _, n, _ in results)
     n_fail = 0
