@@ -23,34 +23,32 @@ export interface StageSpec<S> {
   detail: string;
 }
 
-/** 5.6 s total. The spec calls for 5-6 s; past 8 s it reads as slow. */
+/** 7.5 s total, per the 2.5 choreography. */
 export const CRASH_STAGES: StageSpec<CrashStage>[] = [
-  { stage: "climate", ms: 1200, headline: "1 · The climate shifts",
-    detail: "Air temperature, humidity and wind for this scenario" },
-  { stage: "thermal", ms: 1200, headline: "2 · Thermal stress rises",
-    detail: "Mean radiant temperature and UTCI, sun versus shade" },
-  { stage: "people", ms: 2000, headline: "3 · People are exposed",
-    detail: "The same simulated walkers, moving on their real routes" },
-  { stage: "hotspot", ms: 1200, headline: "4 · The vulnerable streets",
-    detail: "Where those people absorb the most" },
+  { stage: "climate", ms: 1500, headline: "1 · The climate shifts",
+    detail: "Air temperature rises. Humidity, wind and solar are held constant" },
+  { stage: "thermal", ms: 1500, headline: "2 · Thermal stress rises",
+    detail: "Mean radiant temperature and UTCI; the gradient crosses bands" },
+  { stage: "people", ms: 2500, headline: "3 · People are exposed",
+    detail: "The same walkers recolour; exposure dose accumulates" },
+  { stage: "hotspot", ms: 2000, headline: "4 · The vulnerable streets",
+    detail: "The highest human-exposure location pulses" },
 ];
 
-/** 8.0 s total, per the spec's Adjust choreography. */
+/** 10.0 s total, per the 2.5 Adjust choreography. */
 export const ADAPT_STAGES: StageSpec<AdaptStage>[] = [
-  { stage: "lock", ms: 600, headline: "Plan locked",
-    detail: "Budget, objective and geography frozen" },
-  { stage: "rank", ms: 800, headline: "1 · Siting solutions",
-    detail: "Candidate sites ranked by exposure avoided per dollar" },
-  { stage: "place", ms: 1600, headline: "2 · Adding shade",
-    detail: "Each placement at its exact location" },
-  { stage: "grow", ms: 1200, headline: "2 · Adding shade",
-    detail: "Canopy at maturity; shelter roofs unfold" },
-  { stage: "cool", ms: 1200, headline: "3 · Cooling locations",
-    detail: "Only the affected geometry moves from Before to After" },
-  { stage: "retest", ms: 2000, headline: "4 · Re-testing the same people",
-    detail: "Identical agents, routes and weather" },
-  { stage: "land", ms: 600, headline: "Result",
-    detail: "Walking, waiting and total exposure avoided" },
+  { stage: "lock", ms: 1000, headline: "Plan locked",
+    detail: "Budget, policy, scenario, agents and input hash frozen" },
+  { stage: "rank", ms: 0, headline: "Plan locked", detail: "" },
+  { stage: "place", ms: 4000, headline: "1 · Siting solutions",
+    detail: "Each purchased unit lands at its exact point, in optimiser order" },
+  { stage: "grow", ms: 0, headline: "1 · Siting solutions", detail: "" },
+  { stage: "cool", ms: 2000, headline: "2 · Protecting the ground",
+    detail: "Tree shade blooms along footways; shelter roofs cover the stop" },
+  { stage: "retest", ms: 2000, headline: "3 · Re-testing the same people",
+    detail: "Identical agents, routes, waits and clock" },
+  { stage: "land", ms: 1000, headline: "4 · Result",
+    detail: "Baseline, future before, future after" },
 ];
 
 export function totalMs<S>(stages: StageSpec<S>[]): number {

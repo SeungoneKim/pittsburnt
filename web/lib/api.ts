@@ -12,7 +12,8 @@
  */
 import { inputHash, validateSnapshot } from "./provenance";
 import type {
-  AdaptResult, CrashResult, ImpactScope, Meta, Placement, Selection, SourceMode,
+  AdaptResult, CrashResult, ImpactScope, Meta, Placement, ReadySelection,
+  SourceMode,
 } from "./types";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -61,7 +62,11 @@ async function statik<T>(file: string): Promise<T> {
 // The static bundle is fetched once and reused for every subsequent answer.
 const bundle: {
   crash?: { sun_by_hour: Record<string, number[]>; results: Record<string, CrashResult> };
-  adapts?: { kinds: string[]; variants: string[]; results: Record<string, RawAdapt> };
+  adapts?: {
+    kinds: string[]; policies: string[];
+    unitFields: string[];
+    results: Record<string, RawAdapt>;
+  };
   meta?: Meta;
 } = {};
 
@@ -83,6 +88,14 @@ interface RawAdapt {
   reduction_pct: number;
   impact_scopes: ImpactScope[];
   rank_trace: AdaptResult["rank_trace"];
+  policy: string;
+  policy_label: string;
+  service_floor: AdaptResult["service_floor"];
+  /** Only the segments an intervention actually touched. */
+  after_sun_diff: [number, number][];
+  after_utci_diff: [number, number][];
+  /** [kindIndex, lon, lat, phase] per purchased unit. */
+  units: [number, number, number, number][];
   changed: [number, number][];
   placements: [number, number, number][];
 }
@@ -103,28 +116,36 @@ async function crashBundle() {
   return bundle.crash!;
 }
 
+/** Rebuild a full array from a base plus the indices that changed. */
+function applyDiff(base: number[], diff: [number, number][]): number[] {
+  const out = base.slice();
+  for (const [i, v] of diff) out[i] = v;
+  return out;
+}
+
 async function adaptBundle() {
   if (!bundle.adapts) bundle.adapts = await statik("adapts.json");
   return bundle.adapts!;
 }
 
 /** The hash this request must be answered with. */
-function expectedCrashHash(meta: Meta, sel: Selection): string {
+function expectedCrashHash(meta: Meta, sel: ReadySelection): string {
   return inputHash({
     datasetVersion: meta.dataset_version, scenario: sel.scenario,
     hour: sel.hour, persona: sel.persona,
   });
 }
 
-function expectedAdaptHash(meta: Meta, sel: Selection): string {
+function expectedAdaptHash(meta: Meta, sel: ReadySelection): string {
   return inputHash({
     datasetVersion: meta.dataset_version, scenario: sel.scenario,
     hour: sel.hour, persona: sel.persona, budgetUsd: sel.budget,
-    kinds: sel.variant === "all" ? null : [sel.variant],
+    // The policy is part of the question, so it is part of the hash.
+    kinds: [`policy:${sel.policy}`],
   });
 }
 
-export async function crashTest(sel: Selection): Promise<CrashResult> {
+export async function crashTest(sel: ReadySelection): Promise<CrashResult> {
   const meta = await loadMeta();
   const expected = expectedCrashHash(meta, sel);
 
@@ -179,7 +200,7 @@ export async function crashTest(sel: Selection): Promise<CrashResult> {
   return { ...r, sun: b.sun_by_hour[String(sel.hour)] };
 }
 
-export async function adapt(sel: Selection, before: CrashResult): Promise<AdaptResult> {
+export async function adapt(sel: ReadySelection, before: CrashResult): Promise<AdaptResult> {
   const meta0 = await loadMeta();
   const expected = expectedAdaptHash(meta0, sel);
 
@@ -192,6 +213,10 @@ export async function adapt(sel: Selection, before: CrashResult): Promise<AdaptR
     before_heat_load: number; after_heat_load: number;
     reduction_pct: number; impact_scopes: ImpactScope[];
     rank_trace: AdaptResult["rank_trace"];
+    policy: string; policy_label: string;
+    service_floor: AdaptResult["service_floor"];
+    after_sun: number[]; after_utci_c: number[];
+    unit_placements: AdaptResult["unit_placements"];
     segments: { severe_minutes: number; heat_load: number }[];
     placements: { seg_id: string; kind: string }[];
   }>("/adapt", {
@@ -200,7 +225,7 @@ export async function adapt(sel: Selection, before: CrashResult): Promise<AdaptR
     body: JSON.stringify({
       scenario: sel.scenario, hour: sel.hour, persona: sel.persona,
       budget_usd: sel.budget,
-      kinds: sel.variant === "all" ? null : [sel.variant],
+      policy: sel.policy,
     }),
   });
 
@@ -231,6 +256,10 @@ export async function adapt(sel: Selection, before: CrashResult): Promise<AdaptR
       reduction_pct: live.reduction_pct,
       impact_scopes: live.impact_scopes,
       rank_trace: live.rank_trace,
+    policy: live.policy, policy_label: live.policy_label,
+    service_floor: live.service_floor,
+    after_sun: live.after_sun, after_utci_c: live.after_utci_c,
+    unit_placements: live.unit_placements,
       metric_values: live.segments.map((s) =>
         useSevere ? s.severe_minutes : s.heat_load),
       placements: [...tally.values()],
@@ -240,7 +269,7 @@ export async function adapt(sel: Selection, before: CrashResult): Promise<AdaptR
   setMode("fallback");
   const [b, meta] = [await adaptBundle(), await loadMeta()];
   const r = b.results[
-    `${sel.scenario}|${sel.hour}|${sel.persona}|${sel.budget}|${sel.variant}`];
+    `${sel.scenario}|${sel.hour}|${sel.persona}|${sel.budget}|${sel.policy}`];
   if (!r) throw new Error("no precomputed adapt for that budget");
   // The spec's rule, enforced rather than intended: never serve one budget's
   // cached plan for another.
@@ -261,6 +290,21 @@ export async function adapt(sel: Selection, before: CrashResult): Promise<AdaptR
     before_heat_load: r.before_heat_load, after_heat_load: r.after_heat_load,
     reduction_pct: r.reduction_pct, impact_scopes: r.impact_scopes,
     rank_trace: r.rank_trace,
+    policy: r.policy, policy_label: r.policy_label,
+    service_floor: r.service_floor,
+    // Rebuild the full after-state from the cached diff. The values are the
+    // engine's own; only the zeros were left out.
+    after_sun: applyDiff(before.sun, r.after_sun_diff),
+    after_utci_c: applyDiff(
+      before.sun.map((v) => v * before.utci_sun_c + (1 - v) * before.utci_shade_c),
+      r.after_utci_diff),
+    unit_placements: r.units.map(([k, lon, lat, phase], i) => ({
+      unitId: `${b.kinds[k]}-${i}`,
+      kind: b.kinds[k] as "tree" | "shaded_shelter",
+      segmentId: "", stopId: null,
+      lon, lat, costUsd: 0, order: i,
+      phase: phase === 0 ? "service_floor" as const : "marginal" as const,
+    })),
     metric_values,
     placements: r.placements.map(([si, ki, n]) => ({
       seg_id: meta.seg_ids[si], kind: b.kinds[ki], count: n,

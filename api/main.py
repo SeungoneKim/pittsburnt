@@ -53,6 +53,8 @@ class CrashTestRequest(BaseModel):
 class AdaptRequest(CrashTestRequest):
     budget_usd: float = Field(250000, gt=0)
     kinds: list[str] | None = None
+    policy: str = Field("balanced_protection",
+                        examples=["balanced_protection", "pure_efficiency"])
 
 
 def _segments_payload(res, top: int) -> dict:
@@ -112,8 +114,8 @@ def meta() -> dict:
         "scenarios": [{
             "key": k, "label": v["label"], "delta_c": v["delta_c"],
             "is_extrapolated": v["is_extrapolated"],
-            "hours_crossing": sum(1 for h in v["hours"].values()
-                                  if h["utci_sun_c"] >= SEVERE_UTCI_C),
+            "crossing_hours": sorted(int(hr) for hr, h in v["hours"].items()
+                                     if h["utci_sun_c"] >= SEVERE_UTCI_C),
             "peak_utci_c": round(max(h["utci_sun_c"] for h in v["hours"].values()), 1),
         } for k, v in engine.scenarios["scenarios"].items()],
         "climate_method": engine.scenarios["method"],
@@ -194,7 +196,7 @@ def adapt(req: AdaptRequest) -> dict:
     """Spend a budget, then re-run the identical scenario and compare."""
     try:
         out = adapter.optimize(req.scenario, req.hour, req.persona,
-                               req.budget_usd, req.kinds)
+                               req.budget_usd, req.kinds, req.policy)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     before, after = out["before"], out["after"]
@@ -220,6 +222,16 @@ def adapt(req: AdaptRequest) -> dict:
         "after_heat_load": round(after.heat_load_total, 2),
         "reduction_pct": round(out["reduction_pct"], 2),
         "impact_scopes": scope,
+        "policy": out["policy"],
+        "policy_label": out["policy_label"],
+        "service_floor": out["service_floor"],
+        # The engine owns the post-intervention environment; the UI renders
+        # it rather than reconstructing it from a ratio of scores.
+        "after_sun": [round(float(x), 4) for x in out["after_sun"]],
+        "after_utci_c": [round(float(x), 2) for x in out["after_utci_c"]],
+        "after_shelter_coverage": [round(float(x), 4)
+                                   for x in out["after_shelter_coverage"]],
+        "unit_placements": out["unit_placements"],
         "rank_trace": out["rank_trace"],
         "placements": out["placements"],
         "changed_segments": changed,

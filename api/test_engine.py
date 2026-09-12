@@ -195,14 +195,36 @@ def main() -> int:
     # "kinds" to the concrete list before hashing produces a value the caller
     # cannot reproduce, and every such plan is then refused as a mismatch -
     # which is exactly what happened until this was caught.
-    for kinds, label in [(None, "all"), (["tree"], "tree"),
-                         (["shaded_shelter"], "shelter")]:
-        got = a.optimize(*HERO, 250000, kinds)["input_hash"]
+    # The allocation policy changes the plan, so it is part of the question
+    # and therefore part of the hash. The client builds the same key.
+    for kinds, policy, label in [
+        (None, "balanced_protection", "balanced"),
+        (None, "pure_efficiency", "pure"),
+        (["tree"], "balanced_protection", "tree-only"),
+    ]:
+        got = a.optimize(*HERO, 250000, kinds, policy)["input_hash"]
         want = ihash(dataset_version=e.dataset_version, scenario=HERO[0],
                      hour=HERO[1], persona=HERO[2], budget_usd=250000,
-                     kinds=kinds)
+                     kinds=(kinds or []) + [f"policy:{policy}"])
         check(f"plan hash reproducible by the caller ({label})", got == want,
               f"{got} vs {want}")
+    # Two policies over the same inputs must not collide.
+    check("policy changes the plan hash",
+          a.optimize(*HERO, 250000, None, "balanced_protection")["input_hash"]
+          != a.optimize(*HERO, 250000, None, "pure_efficiency")["input_hash"])
+    # And the balanced default must actually buy the service floor.
+    bal = a.optimize(*HERO, 250000, None, "balanced_protection")
+    check("balanced protection buys the service floor",
+          bal["counts"]["shaded_shelter"] == 3
+          and len(bal["service_floor"]) == 3,
+          " / ".join(f["corridor"] for f in bal["service_floor"]))
+    check("one placement record per purchased unit",
+          len(bal["unit_placements"])
+          == bal["counts"]["tree"] + bal["counts"]["shaded_shelter"],
+          f"{len(bal['unit_placements'])} units")
+    check("placements have distinct coordinates",
+          len({(u["lon"], u["lat"]) for u in bal["unit_placements"]})
+          == len(bal["unit_placements"]))
 
     b250 = a.optimize(*HERO, 250000)["input_hash"]
     b137 = a.optimize(*HERO, 137500)["input_hash"]

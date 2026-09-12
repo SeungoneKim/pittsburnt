@@ -33,11 +33,9 @@ FALLBACK_BUDGETS = [50_000, 100_000, 250_000, 500_000, 1_000_000]
 # choice belongs to the user. Trees dominate on exposure-per-dollar for
 # people who are *walking*, so without this the other two are never bought
 # and the demo could never show them at all.
-VARIANTS: dict[str, list[str] | None] = {
-    "all": None,
-    "tree": ["tree"],
-    "shaded_shelter": ["shaded_shelter"],
-}
+# The UI's ADAPT choice is the allocation policy, not a subset of
+# intervention types, so that is what the offline bundle caches.
+POLICIES = ["balanced_protection", "pure_efficiency"]
 # Coordinate precision: ~1 m at this latitude, and it roughly halves the file.
 COORD_DP = 5
 
@@ -234,8 +232,8 @@ def main() -> None:
         for hour in HOURS:
             for persona in e.personas:
                 for budget in FALLBACK_BUDGETS:
-                  for vname, kinds_sel in VARIANTS.items():
-                    out = adapter.optimize(sc, hour, persona, budget, kinds_sel)
+                  for pol in POLICIES:
+                    out = adapter.optimize(sc, hour, persona, budget, None, pol)
                     use_sev = out["before"].severe_total > 0
                     before = (out["before"].severe_minutes if use_sev
                               else out["before"].heat_load)
@@ -245,7 +243,7 @@ def main() -> None:
                     # so ship the diff rather than a full 2,409-value array -
                     # the difference between an 8 MB bundle and a 100 KB one.
                     moved = np.nonzero(np.abs(after - before) > 1e-6)[0]
-                    adapts[f"{sc}|{hour}|{persona}|{budget}|{vname}"] = {
+                    adapts[f"{sc}|{hour}|{persona}|{budget}|{pol}"] = {
                         "input_hash": out["input_hash"],
                         "snapshot_id": out["snapshot_id"],
                         "status": out["status"],
@@ -263,6 +261,30 @@ def main() -> None:
                         "reduction_pct": round(out["reduction_pct"], 2),
                         "impact_scopes": impact_scopes(e, props, out["before"],
                                                        out["after"]),
+                        "policy": out["policy"],
+                        "policy_label": out["policy_label"],
+                        "service_floor": out["service_floor"],
+                        # An intervention touches a few dozen segments out of
+                        # 2,409, so the after-state ships as a diff. Storing
+                        # it in full made the bundle 69 MB.
+                        "after_sun_diff": [
+                            [int(i), round(float(out["after_sun"][i]), 4)]
+                            for i in np.nonzero(
+                                np.abs(out["after_sun"]
+                                       - e.sun_exposure[:, e.hour_index(hour)])
+                                > 1e-6)[0]],
+                        "after_utci_diff": [
+                            [int(i), round(float(out["after_utci_c"][i]), 2)]
+                            for i in np.nonzero(
+                                np.abs(out["after_sun"]
+                                       - e.sun_exposure[:, e.hour_index(hour)])
+                                > 1e-6)[0]],
+                        # Placements as tuples, not objects: 900 cached runs
+                        # x ~200 units makes key repetition the dominant cost.
+                        "units": [[kinds.index(u["kind"]),
+                                   round(u["lon"], 5), round(u["lat"], 5),
+                                   0 if u["phase"] == "service_floor" else 1]
+                                  for u in out["unit_placements"]],
                         "rank_trace": out["rank_trace"],
                         "changed": [[int(i), round(float(after[i]), 2)] for i in moved],
                         # [segment index, kind index, how many] - a big budget
@@ -274,12 +296,14 @@ def main() -> None:
                                                for p in out["placements"]).items()],
                     }
     print(f"  precomputed {len(adapts)} adapt runs "
-          f"({len(FALLBACK_BUDGETS)} budgets x {len(VARIANTS)} intervention sets)")
+          f"({len(FALLBACK_BUDGETS)} budgets x {len(POLICIES)} policies)")
 
     (OUT / "crash_tests.json").write_text(json.dumps(
         {"sun_by_hour": sun_by_hour, "results": crash}, separators=(",", ":")))
     (OUT / "adapts.json").write_text(json.dumps(
-        {"kinds": kinds, "variants": list(VARIANTS), "results": adapts},
+        {"kinds": kinds, "policies": POLICIES,
+         "unitFields": ["kind", "lon", "lat", "phase"],
+         "results": adapts},
         separators=(",", ":")))
 
     # --- meta -------------------------------------------------------------
@@ -294,7 +318,7 @@ def main() -> None:
                               "shade_m": v["shade_m"],
                               }
                           for k, v in INTERVENTIONS.items()},
-        "variants": list(VARIANTS),
+        "policies": POLICIES,
         "severe_threshold_utci_c": SEVERE_UTCI_C,
         "heat_load_base_utci_c": HEAT_LOAD_BASE_C,
         "hero_corridors": CORRIDORS,
@@ -315,8 +339,8 @@ def main() -> None:
         "scenarios": [{
             "key": k, "label": v["label"], "delta_c": v["delta_c"],
             "is_extrapolated": v["is_extrapolated"],
-            "hours_crossing": sum(1 for h in v["hours"].values()
-                                  if h["utci_sun_c"] >= SEVERE_UTCI_C),
+            "crossing_hours": sorted(int(hr) for hr, h in v["hours"].items()
+                                     if h["utci_sun_c"] >= SEVERE_UTCI_C),
             "peak_utci_c": round(max(h["utci_sun_c"] for h in v["hours"].values()), 1),
         } for k, v in e.scenarios["scenarios"].items()],
         "climate_method": e.scenarios["method"],

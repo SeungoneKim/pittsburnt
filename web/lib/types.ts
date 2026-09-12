@@ -17,8 +17,8 @@ export interface Scenario {
   label: string;
   delta_c: number;
   is_extrapolated: boolean;
-  /** How many of the four snapshot hours reach Very Strong Heat Stress. */
-  hours_crossing: number;
+  /** The exact hours that reach Very Strong Heat Stress - not a count. */
+  crossing_hours: number[];
   peak_utci_c: number;
 }
 
@@ -152,9 +152,34 @@ export interface RankTrace {
   claim: string;
 }
 
+export interface UnitPlacement {
+  unitId: string;
+  kind: "tree" | "shaded_shelter";
+  segmentId: string;
+  stopId: string | null;
+  lon: number;
+  lat: number;
+  costUsd: number;
+  order: number;
+  phase: "service_floor" | "marginal";
+}
+
+export interface ServiceFloorSite {
+  corridor: string;
+  seg_id: string;
+  waiting_severe_minutes_avoided: number;
+}
+
 export interface AdaptResult {
   input_hash: string;
   rank_trace: RankTrace;
+  policy: string;
+  policy_label: string;
+  service_floor: ServiceFloorSite[];
+  /** Post-intervention environment, from the engine - never reconstructed. */
+  after_sun: number[];
+  after_utci_c: number[];
+  unit_placements: UnitPlacement[];
   snapshot_id: string;
   status: string;
   spent_usd: number;
@@ -178,11 +203,35 @@ export interface AdaptResult {
 /** Which data path answered — surfaced in the UI so the mode is never a guess. */
 export type SourceMode = "live" | "fallback";
 
+/**
+ * Nothing is pre-answered.
+ *
+ * The tool opens on a context map, not on a result for a question nobody
+ * asked. Scenario, hour and persona all start null and the Crash Test is
+ * disabled until a person has chosen all three - so any number on screen is
+ * an answer to something they actually selected.
+ */
 export interface Selection {
+  scenario: string | null;
+  hour: Hour | null;
+  persona: string | null;
+  budget: number;
+  /** Allocation policy: service floor first, or pure marginal efficiency. */
+  policy: "balanced_protection" | "pure_efficiency";
+}
+
+/** A selection with every required field present. */
+export interface ReadySelection extends Selection {
   scenario: string;
   hour: Hour;
   persona: string;
-  budget: number;
-  /** Which intervention types the optimiser may spend on; "all" or one kind. */
-  variant: string;
+}
+
+export function isReady(s: Selection): s is ReadySelection {
+  return s.scenario !== null && s.hour !== null && s.persona !== null;
+}
+
+/** Agents can appear once we know who is walking and when. */
+export function canShowPeople(s: Selection): boolean {
+  return s.persona !== null && s.hour !== null;
 }

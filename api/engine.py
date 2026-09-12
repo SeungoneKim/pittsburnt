@@ -141,6 +141,32 @@ class Engine:
         }))
         self.value_meta = build_catalogue(self)
 
+        # Geometry needed to place a unit at a real point rather than merely
+        # naming the segment it belongs to.
+        segs = json.loads((cache / "segments.geojson").read_text())
+        self.seg_coords: dict[str, list] = {}
+        self.seg_corridor: dict[str, str | None] = {}
+        for f in segs["features"]:
+            sid = f["properties"]["seg_id"]
+            self.seg_coords[sid] = f["geometry"]["coordinates"]
+            self.seg_corridor[sid] = f["properties"].get("corridor")
+
+        stops_path = cache / "bus_stops.geojson"
+        self.stops: list[dict] = []
+        if stops_path.exists():
+            for f in json.loads(stops_path.read_text())["features"]:
+                pr = f["properties"]
+                self.stops.append({
+                    "stop_name": pr.get("stop_name"),
+                    "sheltered": bool(pr.get("sheltered")),
+                    "trips_7d": pr.get("trips_7d"),
+                    "seg_id": pr.get("seg_id"),
+                    "lon": f["geometry"]["coordinates"][0],
+                    "lat": f["geometry"]["coordinates"][1],
+                })
+        self.hero_corridors = ["Forbes Avenue", "Fifth Avenue",
+                               "South Craig Street"]
+
     def input_hash(self, scenario: str, hour: int, persona: str,
                    budget_usd: float | None = None,
                    kinds: list[str] | None = None) -> str:
@@ -314,6 +340,65 @@ INTERVENTIONS = {
 class Adapter:
     """Places interventions and measures what they buy."""
 
+    def _unit_points(self, log: list[dict]) -> list[dict]:
+        """One record per purchased unit, at a real coordinate.
+
+        The map must not infer where a unit went from an aggregate. A tree
+        gets a distinct point sampled along its segment - several trees on one
+        segment must not stack on the same pixel - and a shelter gets the
+        validated coordinate of the stop it protects.
+        """
+        used: dict[str, int] = {}
+        out: list[dict] = []
+        for order, entry in enumerate(log):
+            sid = entry["seg_id"]
+            n = used.get(sid, 0)
+            used[sid] = n + 1
+            coords = self.e.seg_coords.get(sid) or []
+
+            if entry["kind"] == "shaded_shelter":
+                stop = next((s for s in self.e.stops
+                             if s["seg_id"] == sid and not s["sheltered"]), None)
+                if stop:
+                    lon, lat, stop_id = stop["lon"], stop["lat"], stop["stop_name"]
+                else:
+                    lon, lat, stop_id = (*self._along(coords, 0.5), None)
+            else:
+                # Spread trees along the segment rather than at its midpoint.
+                cap = max(1, int(self.max_units("tree")[self.e.index[sid]]))
+                frac = (n + 0.5) / max(cap, n + 1)
+                lon, lat = self._along(coords, min(0.95, max(0.05, frac)))
+                stop_id = None
+
+            out.append({
+                "unitId": f"{entry['kind']}-{sid}-{n}",
+                "kind": entry["kind"], "segmentId": sid, "stopId": stop_id,
+                "lon": round(lon, 6), "lat": round(lat, 6),
+                "costUsd": entry["cost_usd"], "order": order,
+                "phase": entry.get("phase", "marginal"),
+            })
+        return out
+
+    @staticmethod
+    def _along(coords: list, frac: float) -> tuple[float, float]:
+        """Point at `frac` along a LineString, by segment length."""
+        if not coords:
+            return (0.0, 0.0)
+        if len(coords) == 1:
+            return (coords[0][0], coords[0][1])
+        segs = [((coords[i][0] - coords[i - 1][0]) ** 2
+                 + (coords[i][1] - coords[i - 1][1]) ** 2) ** 0.5
+                for i in range(1, len(coords))]
+        total = sum(segs) or 1.0
+        target, acc = frac * total, 0.0
+        for i, d in enumerate(segs):
+            if acc + d >= target:
+                t = (target - acc) / d if d else 0.0
+                a, b = coords[i], coords[i + 1]
+                return (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
+            acc += d
+        return (coords[-1][0], coords[-1][1])
+
     def _rank_trace(self, log, placed, kinds, hi, minutes, waiting,
                     budget_usd, spent) -> dict:
         """Evidence for why this plan, drawn only from the optimiser's own
@@ -405,9 +490,50 @@ class Adapter:
                           0.0, 1.0)
         return spec["block"] * covered * self.e.sun_exposure[:, hour_idx]
 
+    def service_floor(self, hour: int, persona: str) -> list[tuple[str, int]]:
+        """One shaded shelter at the worst unsheltered stop on each corridor.
+
+        Phase A of the Balanced Protection policy. Pure severe-minutes-per-
+        dollar always buys trees - waiting is 3.4% of exposure and a shelter
+        costs 12.5x a tree - so an unconstrained objective never protects a
+        waiting rider anywhere. This is a stated policy floor, not a discovery:
+        every hero corridor gets one protected stop before efficiency is
+        allowed to spend the rest.
+        """
+        hi = self.e.hour_index(hour)
+        p = self.e.persona_index(persona)
+        waiting = self.e.wait_minutes[:, p, hi]
+        sun = self.e.sun_exposure[:, hi]
+        picks: list[tuple[str, int]] = []
+        for corridor in self.e.hero_corridors:
+            best, best_val = None, 0.0
+            for stop in self.e.stops:
+                if stop["sheltered"]:
+                    continue
+                sid = stop["seg_id"]
+                if self.e.seg_corridor.get(sid) != corridor:
+                    continue
+                i = self.e.index.get(sid)
+                if i is None or self.e.shelter_capacity[i] <= 0:
+                    continue
+                # Rank by the waiting exposure one shelter would actually
+                # remove, not by a proxy: a stop whose segment is already
+                # partly sheltered, or which shares its segment with other
+                # stops, has less left to protect.
+                units = np.zeros(len(self.e.seg_ids), dtype=int)
+                units[i] = 1
+                gain = float(self.shelter_delta(units)[i])
+                val = float(waiting[i]) * float(sun[i]) * gain
+                if val > best_val:
+                    best, best_val = (sid, i), val
+            if best:
+                picks.append(best)
+        return picks
+
     def optimize(self, scenario: str, hour: int, persona: str, budget_usd: float,
-                 kinds: list[str] | None = None) -> dict:
-        """Greedy placement by severe-minutes avoided per dollar.
+                 kinds: list[str] | None = None,
+                 policy: str = "balanced_protection") -> dict:
+        """Balanced Protection: a service floor, then marginal allocation.
 
         Objective order follows the spec: maximise severe person-minutes
         avoided first, then cumulative heat load avoided, then minimise cost.
@@ -422,7 +548,8 @@ class Adapter:
         # "any intervention"; expanding that to the concrete list first would
         # produce a hash the caller cannot reproduce, and every such plan
         # would be refused as a mismatch.
-        plan_hash = self.e.input_hash(scenario, hour, persona, budget_usd, kinds)
+        plan_hash = self.e.input_hash(scenario, hour, persona, budget_usd,
+                                      (kinds or []) + [f"policy:{policy}"])
         kinds = kinds or list(INTERVENTIONS)
         hi = self.e.hour_index(hour)
         p = self.e.persona_index(persona)
@@ -451,6 +578,8 @@ class Adapter:
         placed = {k: np.zeros(len(self.e.seg_ids), dtype=int) for k in kinds}
         caps = {k: self.max_units(k) for k in kinds}
         spent, log = 0.0, []
+        floor_sites: list[dict] = []
+
 
         def state(placed_map):
             sun = np.clip(sun0 - sum(self.sun_delta(j, placed_map[j], hi)
@@ -460,7 +589,31 @@ class Adapter:
                      if shelters is not None else cover0)
             return sun, cover
 
-        cur_sun, cur_cover = sun0.copy(), cover0.copy()
+
+        # --- Phase A: the transparent service floor -----------------------
+        if policy == "balanced_protection" and "shaded_shelter" in kinds:
+            cost = INTERVENTIONS["shaded_shelter"]["cost_usd"]
+            base_sev, base_load = score(sun0, cover0)
+            for sid, i in self.service_floor(hour, persona):
+                if spent + cost > budget_usd or placed["shaded_shelter"][i] >= caps["shaded_shelter"][i]:
+                    continue
+                placed["shaded_shelter"][i] += 1
+                spent += cost
+                trial_sun, trial_cover = state(placed)
+                t_sev, t_load = score(trial_sun, trial_cover)
+                saved = float(base_sev[i] - t_sev[i])
+                log.append({"seg_id": sid, "kind": "shaded_shelter",
+                            "cost_usd": cost,
+                            "severe_minutes_saved": round(saved, 4),
+                            "heat_load_saved": round(float(base_load[i] - t_load[i]), 3),
+                            "phase": "service_floor"})
+                floor_sites.append({
+                    "corridor": self.e.seg_corridor.get(sid),
+                    "seg_id": sid,
+                    "waiting_severe_minutes_avoided": round(saved, 4)})
+                base_sev, base_load = t_sev, t_load
+
+        cur_sun, cur_cover = state(placed)
         cur_sev, cur_load = score(cur_sun, cur_cover)
         # A candidate is worth considering if anyone is there and there is sun
         # to remove - walkers for a tree, waiters for a shelter.
@@ -503,7 +656,8 @@ class Adapter:
             log.append({"seg_id": self.e.seg_ids[idx], "kind": kind,
                         "cost_usd": cost,
                         "severe_minutes_saved": round(float(g_sev), 4),
-                        "heat_load_saved": round(float(g_load), 3)})
+                        "heat_load_saved": round(float(g_load), 3),
+                        "phase": "marginal"})
             cur_sun, cur_cover = state(placed)
             cur_sev, cur_load = score(cur_sun, cur_cover)
 
@@ -524,6 +678,18 @@ class Adapter:
             "shelter_delta": cover_delta,
             "reduction_pct": 100.0 * num / denom,
             "metric_used": "severe_person_minutes" if base.severe_total else "heat_load",
+            "policy": policy,
+            "policy_label": ("Balanced Protection policy"
+                             if policy == "balanced_protection"
+                             else "Pure marginal efficiency"),
+            "service_floor": floor_sites,
+            # The engine owns the post-intervention environment. The UI used
+            # to back out the new sun fraction from a ratio of exposure
+            # scores, which is a reconstruction, not a result.
+            "after_sun": cur_sun,
+            "after_utci_c": (cur_sun * u_sun + (1.0 - cur_sun) * u_shade),
+            "after_shelter_coverage": cur_cover,
+            "unit_placements": self._unit_points(log),
             "rank_trace": self._rank_trace(log, placed, kinds, hi, minutes,
                                            waiting, budget_usd, spent),
             "input_hash": plan_hash,

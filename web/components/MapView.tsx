@@ -2,8 +2,13 @@
 
 import { useEffect, useRef } from "react";
 
-import { AGENT_COUNT, buildRoutes, sampleRoute } from "@/lib/agents";
+import {
+  buildRoutes, doseAt, doseProfile, progressAt, sampleRoute,
+} from "@/lib/agents";
 import type { AgentRoute } from "@/lib/agents";
+
+/** Used only to position a neutral agent before any snapshot exists. */
+const BLANK = { utci_sun_c: 0, utci_shade_c: 0 } as unknown as CrashResult;
 import "mapbox-gl/dist/mapbox-gl.css";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { AdaptResult, CrashResult, Hour, Meta } from "@/lib/types";
@@ -74,21 +79,24 @@ interface Props {
   meta: Meta;
   result: CrashResult | null;
   adapted: AdaptResult | null;
-  hour: Hour;
+  hour: Hour | null;
   layers: {
     shadow: boolean; canopy: boolean; trees: boolean;
     buildings: boolean; trips: boolean; agents: boolean;
   };
-  persona: string;
+  persona: string | null;
   crashStage: string;
   adaptStage: string;
   stageProgress: number;
+  placedFraction: number;
+  /** Hand the page a way to clear every dynamic layer on reset. */
+  registerReset: (fn: () => void) => void;
   onSegmentClick?: (segId: string, index: number) => void;
 }
 
 export default function MapView({
   meta, result, adapted, hour, layers, persona, crashStage, adaptStage,
-  stageProgress, onSegmentClick,
+  stageProgress, placedFraction, registerReset, onSegmentClick,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const map = useRef<GLMap | null>(null);
@@ -99,6 +107,7 @@ export default function MapView({
   const segGeo = useRef<GeoJSON.FeatureCollection | null>(null);
   const tripGeo = useRef<GeoJSON.FeatureCollection | null>(null);
   const agents = useRef<AgentRoute[]>([]);
+  const doses = useRef<number[][]>([]);
   const raf = useRef<number | null>(null);
 
   // --- create the map once -------------------------------------------------
@@ -245,44 +254,78 @@ export default function MapView({
         });
 
         // Where the optimiser actually spent the money.
-        m.addSource("placed", {
-          type: "geojson",
-          data: { type: "FeatureCollection", features: [] },
-        });
-        // Segments in the Very Strong band, drawn over the tint so the
-        // threshold reads as a class rather than as one more shade of orange.
-        // Moving agents. A halo grows while an agent is above the severe
-        // threshold, so its size means accumulated exposure rather than
-        // elapsed time.
+        // Moving people. Neutral until a validated snapshot exists to colour
+        // them; the halo then grows with accumulated severe dose.
         m.addSource("agents", {
-          type: "geojson",
-          data: { type: "FeatureCollection", features: [] },
+          type: "geojson", data: { type: "FeatureCollection", features: [] },
         });
         m.addLayer({
           id: "agent-halo", type: "circle", source: "agents",
           layout: { visibility: "none" },
           paint: {
             "circle-radius": ["interpolate", ["linear"], ["get", "severe"],
-              0, 0, 20, 16],
-            "circle-color": "#d7301f", "circle-opacity": 0.16,
-            "circle-blur": 0.5,
+              0, 0, 20, 18],
+            "circle-color": "#d7301f", "circle-opacity": 0.15,
+            "circle-blur": 0.6,
           },
         });
         m.addLayer({
           id: "agent-dot", type: "circle", source: "agents",
           layout: { visibility: "none" },
           paint: {
-            "circle-radius": ["interpolate", ["linear"], ["zoom"], 13, 2.6, 17, 5.5],
-            "circle-color": ["interpolate", ["linear"], ["get", "utci"],
-              ...UTCI_RAMP.flatMap(([stop, colour]) => [stop, colour])],
-            "circle-stroke-color": "#ffffff", "circle-stroke-width": 1,
+            "circle-radius": ["interpolate", ["linear"], ["zoom"], 13, 3, 17, 6],
+            "circle-color": [
+              "case",
+              ["<", ["get", "utci"], 0], "#64748b",   // neutral, pre-Crash
+              ["interpolate", ["linear"], ["get", "utci"],
+                ...UTCI_RAMP.flatMap(([stop, colour]) => [stop, colour])],
+            ],
+            "circle-stroke-color": "#ffffff", "circle-stroke-width": 1.2,
           },
         });
 
-        // Human-exposure hotspots. The thermal tint already says which
-        // streets are in the Very Strong band - about half of them - so
-        // emphasis is reserved for where people actually absorb the most.
-        // A percentile may rank hotspots; it may not restate a stress class.
+        // One point per purchased unit, at its exact coordinate, plus the
+        // shade footprint that unit actually casts. Highlighting a whole
+        // segment for "a tree went somewhere on this street" is not a
+        // placement.
+        m.addSource("shade-footprints", {
+          type: "geojson", data: { type: "FeatureCollection", features: [] },
+        });
+        m.addLayer({
+          id: "shade-footprints", type: "fill", source: "shade-footprints",
+          paint: {
+            "fill-color": ["match", ["get", "kind"],
+              "shaded_shelter", "#0f766e", "#15803d"],
+            "fill-opacity": ["*", 0.28, ["coalesce", ["get", "bloom"], 0]],
+          },
+        });
+        m.addSource("placed", {
+          type: "geojson", data: { type: "FeatureCollection", features: [] },
+        });
+        m.addLayer({
+          id: "placed", type: "circle", source: "placed",
+          paint: {
+            // "zoom" must be the top-level input to interpolate, so the pop
+            // scale multiplies inside each stop rather than wrapping it.
+            "circle-radius": ["interpolate", ["linear"], ["zoom"],
+              13, ["*", 5, ["coalesce", ["get", "pop"], 1]],
+              17, ["*", 11, ["coalesce", ["get", "pop"], 1]]],
+            "circle-color": ["match", ["get", "kind"],
+              "shaded_shelter", "#0f766e", "#15803d"],
+            "circle-stroke-color": "#ffffff",
+            "circle-stroke-width": 2,
+          },
+        });
+        m.addLayer({
+          id: "placed-glyph", type: "symbol", source: "placed",
+          layout: {
+            "text-field": ["match", ["get", "kind"], "shaded_shelter", "\u26E9", "\u2663"],
+            "text-size": ["interpolate", ["linear"], ["zoom"], 13, 8, 17, 14],
+            "text-allow-overlap": true,
+          },
+          paint: { "text-color": "#ffffff" },
+        });
+
         // feature-state is not permitted in a layer filter, only in paint,
         // so visibility runs through opacity.
         m.addLayer({
@@ -294,17 +337,6 @@ export default function MapView({
               "case", ["==", ["feature-state", "hotspot"], true], 0.2, 0,
             ],
             "line-blur": 2,
-          },
-        });
-
-        m.addLayer({
-          id: "placed", type: "line", source: "placed",
-          layout: { "line-cap": "round" },
-          paint: {
-            "line-color": "#1f9d55",
-            "line-width": ["interpolate", ["linear"], ["zoom"], 13, 3.5, 17, 8],
-            "line-opacity": 0.85,
-            "line-dasharray": [1, 1.1],
           },
         });
 
@@ -327,9 +359,56 @@ export default function MapView({
         m.on("mouseenter", "segments", () => { m.getCanvas().style.cursor = "pointer"; });
         m.on("mouseleave", "segments", () => { m.getCanvas().style.cursor = ""; });
 
+        // Reset contract: cancel animation, clear every feature-state key,
+        // and empty every dynamic source. A reset that leaves a halo or a
+        // stale agent behind is not a reset.
+        registerReset(() => {
+          if (raf.current !== null) cancelAnimationFrame(raf.current);
+          raf.current = null;
+          agents.current = [];
+          doses.current = [];
+          for (const id of ["agents", "placed", "shade-footprints"]) {
+            const src = m.getSource(id);
+            if (src) src.setData({ type: "FeatureCollection", features: [] });
+          }
+          m.removeFeatureState({ source: "segments" });
+          for (const l of ["canopy", "trees", "trips", "buildings"]) {
+            if (m.getLayer(l)) m.setLayoutProperty(l, "visibility", "none");
+          }
+          for (const h of meta.hours) {
+            if (m.getLayer(`shadow-${h}`)) {
+              m.setLayoutProperty(`shadow-${h}`, "visibility", "none");
+            }
+          }
+          m.easeTo({
+            center: [meta.center.lon, meta.center.lat], zoom: 14.1,
+            duration: 600,
+          });
+        });
+
         ready.current = true;
         // Handy for inspecting a live map from the browser console.
         (window as unknown as Record<string, unknown>).__map = m;
+        // Lets the acceptance test assert the reset contract from outside.
+        (window as unknown as Record<string, unknown>).__mapState = () => {
+          const count = (id: string) => {
+            const src = m.getSource(id);
+            const d = src && (src as unknown as { _data?: GeoJSON.FeatureCollection })._data;
+            return d?.features?.length ?? 0;
+          };
+          let stateful = 0;
+          for (let i = 0; i < meta.seg_ids.length; i += 1) {
+            if (Object.keys(m.getFeatureState({ source: "segments", id: i })).length) {
+              stateful += 1;
+            }
+          }
+          return {
+            dynamicSourceFeatureCount:
+              count("agents") + count("placed") + count("shade-footprints"),
+            segmentsWithFeatureState: stateful,
+            animationRunning: raf.current !== null,
+          };
+        };
       });
     })();
 
@@ -347,23 +426,28 @@ export default function MapView({
   useEffect(() => {
     const m = map.current;
     if (!m || !ready.current) return;
-    // Each beat reveals its own layer. Nothing here computes: the values
-    // were all returned by the engine before the sequence started.
+    // Each beat reveals its own layer. Nothing here computes: the engine
+    // returned every value before the sequence started.
     const showThermal = ["thermal", "people", "hotspot", "complete"]
       .includes(crashStage);
     const showHalo = ["hotspot", "complete"].includes(crashStage);
     if (!result || !showThermal) {
-      for (let i = 0; i < meta.seg_ids.length; i += 1) {
-        m.setFeatureState({ source: "segments", id: i }, { scored: false, utci: 0 });
-      }
+      // Clear, do not write zeros: writing {scored:false} to every segment
+      // is still feature-state, and a reset that leaves it behind has not
+      // reset anything.
+      m.removeFeatureState({ source: "segments" });
       return;
     }
-    const sun0 = result.sun;
-    const severe = adapted?.metric_values ?? result.severe_minutes;
-    const uSun = result.utci_sun_c;
-    const uShade = result.utci_shade_c;
 
-    // Top 25 by human exposure get the halo.
+    // After ADAPT the engine supplies the post-intervention environment
+    // directly. Backing it out of a ratio of exposure scores, as the previous
+    // version did, is a reconstruction rather than a result.
+    const cooled = adapted && ["cool", "retest", "land", "complete"]
+      .includes(adaptStage);
+    const utciArr = cooled ? adapted.after_utci_c : null;
+    const sunArr = cooled ? adapted.after_sun : result.sun;
+    const severe = adapted?.metric_values ?? result.severe_minutes;
+
     const ranked = severe
       .map((v, i) => [v, i] as [number, number])
       .filter(([v]) => v > 0)
@@ -372,15 +456,10 @@ export default function MapView({
     const isHotspot = new Set(ranked.map(([, i]) => i));
 
     for (let i = 0; i < meta.seg_ids.length; i += 1) {
-      // After ADAPT, a segment's sun fraction has fallen; recover it from the
-      // change in its severe minutes so the map cools where shade was added.
-      let sun = sun0[i];
-      if (adapted && result.severe_minutes[i] > 0) {
-        sun = sun0[i] * (severe[i] / result.severe_minutes[i]);
-      }
-      const utci = sun * uSun + (1 - sun) * uShade;
-      // A segment nobody walks has no human exposure to report; it stays on
-      // the grey base layer rather than being coloured as if it were safe.
+      const sun = sunArr[i];
+      const utci = utciArr
+        ? utciArr[i]
+        : sun * result.utci_sun_c + (1 - sun) * result.utci_shade_c;
       m.setFeatureState({ source: "segments", id: i }, {
         scored: result.minutes[i] > 0,
         utci,
@@ -391,33 +470,60 @@ export default function MapView({
     }
   }, [result, adapted, meta.seg_ids.length, crashStage, adaptStage, stageProgress]);
 
-  // --- highlight where money was spent ------------------------------------
+  // --- exact placements ----------------------------------------------------
   useEffect(() => {
     const m = map.current;
     if (!m || !ready.current) return;
-    const src = m.getSource("placed");
-    if (!src) return;
-    const showPlacements = !["idle", "loading", "lock", "rank"]
-      .includes(adaptStage);
-    if (!adapted || !showPlacements) {
-      src.setData({ type: "FeatureCollection", features: [] });
+    const pts = m.getSource("placed");
+    const foot = m.getSource("shade-footprints");
+    if (!pts || !foot) return;
+
+    const show = !["idle", "loading", "lock", "rank"].includes(adaptStage);
+    if (!adapted || !show) {
+      pts.setData({ type: "FeatureCollection", features: [] });
+      foot.setData({ type: "FeatureCollection", features: [] });
       return;
     }
-    const data = segGeo.current;
-    if (!data) return;
-    // Placements land in optimiser order over the "place" beat: the first
-    // few individually, the rest in batches, so nobody waits through 208
-    // identical pops.
-    const frac = adaptStage === "place" ? stageProgress : 1;
-    const shown = Math.max(1, Math.round(adapted.placements.length * frac));
-    const wanted = new Set(
-      adapted.placements.slice(0, shown).map((p) => p.seg_id));
-    src.setData({
+
+    // Units land in optimiser order across the "place" beat.
+    const units = adapted.unit_placements;
+    const shown = Math.max(1, Math.round(units.length * placedFraction));
+    const visible = units.slice(0, shown);
+
+    pts.setData({
       type: "FeatureCollection",
-      features: data.features.filter(
-        (f) => wanted.has(String((f.properties as Record<string, unknown>).seg_id))),
+      features: visible.map((u, i) => {
+        // Stagger the pop so the first few read individually.
+        const age = shown - i;
+        const pop = age < 3 ? 0.25 + 0.75 * Math.min(1, age / 2.5) : 1;
+        return {
+          type: "Feature" as const,
+          properties: { kind: u.kind, pop, unitId: u.unitId },
+          geometry: { type: "Point" as const, coordinates: [u.lon, u.lat] },
+        };
+      }),
     });
-  }, [adapted, adaptStage, stageProgress]);
+
+    // Shade blooms during "grow" and stays afterwards.
+    const bloom = adaptStage === "grow" ? stageProgress
+      : ["cool", "retest", "land", "complete"].includes(adaptStage) ? 1 : 0;
+    const R = 0.00008;   // ~9 m, roughly a mature crown
+    foot.setData({
+      type: "FeatureCollection",
+      features: visible.map((u) => {
+        const r = R * (u.kind === "shaded_shelter" ? 0.55 : 1) * bloom;
+        const ring = Array.from({ length: 17 }, (_, k) => {
+          const a = (k / 16) * Math.PI * 2;
+          return [u.lon + Math.cos(a) * r * 1.3, u.lat + Math.sin(a) * r];
+        });
+        return {
+          type: "Feature" as const,
+          properties: { kind: u.kind, bloom },
+          geometry: { type: "Polygon" as const, coordinates: [ring] },
+        };
+      }),
+    });
+  }, [adapted, adaptStage, stageProgress, placedFraction]);
 
   // --- layer toggles -------------------------------------------------------
   useEffect(() => {
@@ -446,30 +552,39 @@ export default function MapView({
       if (raf.current !== null) cancelAnimationFrame(raf.current);
       raf.current = null;
     };
-    const showAgents = ["people", "hotspot", "complete"].includes(crashStage)
-      || ["retest", "land", "complete"].includes(adaptStage);
-    if (!m || !ready.current || !layers.agents || !result || !tripGeo.current
-        || !showAgents) {
+    // People appear as soon as we know who and when - before any Crash Test.
+    // They are neutral until a validated snapshot exists to colour them.
+    const havePeople = persona !== null && hour !== null;
+    if (!m || !ready.current || !havePeople || !layers.agents || !tripGeo.current) {
       stop();
       return stop;
     }
+    const coloured = !!result && ["people", "hotspot", "complete"].includes(crashStage);
+    const afterColoured = !!result && ["retest", "land", "complete"].includes(adaptStage);
 
     agents.current = buildRoutes(tripGeo.current, persona, hour);
+    doses.current = result
+      ? agents.current.map((r) => doseProfile(r, result, meta.severe_threshold_utci_c))
+      : [];
     const src = m.getSource("agents");
     if (!src || !agents.current.length) return stop;
 
-    // One full walk-through every 14 seconds, staggered so the cohort does
-    // not move as a single block.
-    const PERIOD = 14000;
     const start = performance.now();
     const tick = (now: number) => {
-      const base = ((now - start) % PERIOD) / PERIOD;
+      const t = now - start;
       const features = agents.current.map((r, i) => {
-        const u = (base + i / agents.current.length) % 1;
-        const st = sampleRoute(r, u, result, meta.severe_threshold_utci_c);
+        // Each agent runs on its own real duration, so a slower cohort
+        // visibly takes longer over the same ground.
+        const u = progressAt(r, t);
+        const st = sampleRoute(r, u, result ?? BLANK, meta.severe_threshold_utci_c);
+        const dose = (coloured || afterColoured) && doses.current[i]
+          ? doseAt(r, doses.current[i], u) : 0;
         return {
           type: "Feature" as const,
-          properties: { utci: st.utci, severe: st.severeSoFar },
+          properties: {
+            utci: coloured || afterColoured ? st.utci : -1,
+            severe: dose,
+          },
           geometry: { type: "Point" as const, coordinates: [st.lon, st.lat] },
         };
       });
