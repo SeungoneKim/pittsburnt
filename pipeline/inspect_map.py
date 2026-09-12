@@ -9,7 +9,7 @@ import json
 
 import geopandas as gpd
 
-from config import CACHE, CENTER, CORRIDORS
+from config import CACHE, CENTER, CORRIDORS, CRS_METRIC, CRS_WGS84
 
 OUT = CACHE / "inspect.html"
 
@@ -41,10 +41,14 @@ TEMPLATE = """<!doctype html><html><head><meta charset="utf-8">
   <hr>
   <label><input type="checkbox" id="corronly"> hero corridors only</label>
   <label><input type="checkbox" id="showcl" checked> road centrelines (grey)</label>
+  <label><input type="checkbox" id="showbld" checked> buildings (shaded by height)</label>
+  <label><input type="checkbox" id="showmod" checked>
+    <span style="border-bottom:2px dashed #e0431f">dash</span> = height is modelled, not measured</label>
   <div id="hint">Click any segment for its properties.</div>
 </div>
 <script>
 const SEGMENTS = __SEGMENTS__;
+const BUILDINGS = __BUILDINGS__;
 const CENTRELINES = __CENTRELINES__;
 const HERO = __HERO__;
 const COLORS = __COLORS__;
@@ -59,6 +63,26 @@ const map = new maplibregl.Map({
 });
 
 map.on('load',()=>{
+  if(BUILDINGS){
+    map.addSource('bld',{type:'geojson',data:BUILDINGS});
+    // Height drives the fill ramp; measured vs modelled drives the outline,
+    // so you can see at a glance how much of the massing is inferred.
+    map.addLayer({id:'bld',type:'fill',source:'bld',paint:{
+      'fill-color':['interpolate',['linear'],['get','height_m'],
+        3,'#f2efe9', 10,'#dcd6c8', 25,'#b9ad95', 60,'#8e7f63', 120,'#5f523c'],
+      'fill-opacity':.85}});
+    map.addLayer({id:'bldmod',type:'line',source:'bld',
+      filter:['==',['get','height_is_measured'],false],
+      paint:{'line-color':'#e0431f','line-width':1,'line-dasharray':[2,2],
+             'line-opacity':.9}});
+    map.on('click','bld',e=>{
+      const p=e.features[0].properties;
+      new maplibregl.Popup({maxWidth:'320px'}).setLngLat(e.lngLat)
+        .setHTML('<div id="pop">'+Object.entries(p)
+          .map(([k,v])=>`<b>${k}</b>: ${v===null?'<i>null</i>':v}`).join('<br>')
+        +'</div>').addTo(map);
+    });
+  }
   map.addSource('cl',{type:'geojson',data:CENTRELINES});
   map.addLayer({id:'cl',type:'line',source:'cl',
     paint:{'line-color':'#b9b9c2','line-width':3,'line-opacity':.55}});
@@ -98,6 +122,10 @@ map.on('load',()=>{
   };
   document.getElementById('showcl').onchange=e=>
     map.setLayoutProperty('cl','visibility',e.target.checked?'visible':'none');
+  document.getElementById('showbld').onchange=e=>
+    map.setLayoutProperty('bld','visibility',e.target.checked?'visible':'none');
+  document.getElementById('showmod').onchange=e=>
+    map.setLayoutProperty('bldmod','visibility',e.target.checked?'visible':'none');
 });
 
 const leg=document.getElementById('legend');
@@ -122,6 +150,8 @@ CLASS_COLORS = {
 def main() -> None:
     seg = gpd.read_file(CACHE / "segments.geojson")
     cl = gpd.read_file(CACHE / "corridors.geojson")
+    bld_path = CACHE / "buildings.geojson"
+    bld = gpd.read_file(bld_path) if bld_path.exists() else None
 
     legend = []
     for name, colour in CORRIDOR_COLORS.items():
@@ -133,10 +163,19 @@ def main() -> None:
 
     sub = (f"{len(seg)} segments · {seg.length_m.sum()/1000:.1f} km · "
            f"median {seg.length_m.median():.0f} m")
+    if bld is not None:
+        sub += (f"<br>{len(bld)} buildings · "
+                f"{bld.height_is_measured.mean()*100:.0f}% measured height")
+        # Simplify to keep the standalone file openable; 0.5 m is far below
+        # what matters for a shadow at this scale.
+        bld = bld.to_crs(CRS_METRIC)
+        bld["geometry"] = bld.geometry.simplify(0.5)
+        bld = bld.to_crs(CRS_WGS84)
 
     html = (TEMPLATE
             .replace("__SEGMENTS__", seg.to_json())
             .replace("__CENTRELINES__", cl.to_json())
+            .replace("__BUILDINGS__", bld.to_json() if bld is not None else "null")
             .replace("__HERO__", json.dumps(CORRIDORS))
             .replace("__COLORS__", json.dumps({"corridor": CORRIDOR_COLORS,
                                                "klass": CLASS_COLORS}))

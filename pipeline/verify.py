@@ -82,9 +82,41 @@ def verify_edge_map() -> None:
           f"median {np.median(totals):.1f} m/edge")
 
 
+def verify_buildings() -> None:
+    path = CACHE / "buildings.geojson"
+    if not path.exists():
+        check("buildings.geojson exists", False, "missing - run step02")
+        return
+    b = gpd.read_file(path)
+
+    check("buildings.geojson exists", True, f"{len(b)} features")
+    check("bldg_id unique", b.bldg_id.is_unique,
+          f"{len(b)} rows / {b.bldg_id.nunique()} unique")
+    check("all geometries valid", b.geometry.is_valid.all())
+    check("every building has a height", b.height_m.notna().all())
+    check("heights physically plausible", bool(((b.height_m >= 2) & (b.height_m <= 250)).all()),
+          f"{b.height_m.min():.1f} - {b.height_m.max():.1f} m")
+    check("every height has a source", b.height_source.notna().all() & (b.height_source != "").all(),
+          " / ".join(sorted(b.height_source.unique())))
+
+    meas = b.height_is_measured
+    check("majority of buildings measured", meas.mean() >= 0.5,
+          f"{meas.mean()*100:.1f}% of buildings, "
+          f"{b[meas].area_m2.sum()/b.area_m2.sum()*100:.1f}% of area")
+    # The tall landmark is the sanity check that the ladder reaches 3D data.
+    tallest = b.loc[b.height_m.idxmax()]
+    check("tallest building is a real landmark", tallest.height_m > 100,
+          f"{tallest.bldg_name} at {tallest.height_m:.0f} m ({tallest.height_source})")
+    check("shadow-casting area mostly measured", 
+          b[meas].area_m2.sum()/b.area_m2.sum() >= 0.5,
+          f"{b[meas].area_m2.sum()/b.area_m2.sum()*100:.1f}% of footprint area",
+          warn_only=True)
+
+
 def main() -> int:
     verify_segments()
     verify_edge_map()
+    verify_buildings()
 
     width = max(len(n) for _, n, _ in results)
     n_fail = 0
