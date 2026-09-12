@@ -32,7 +32,10 @@ import urllib.request
 # Two budgets, because the two calls have different stakes. The draft is the
 # feature and is worth waiting for; the follow-up questions are a nicety that
 # already has a deterministic fallback, so they get a short leash.
-TIMEOUT_S = 60
+# Drafting a measure is the longest single call: the system prompt carries the
+# whole mechanism vocabulary, and a reasoning model spends real time on the
+# sign of a Tmrt change. Measured at 45-90 s, so the budget is 120.
+TIMEOUT_S = 120
 CLARIFY_TIMEOUT_S = 25
 
 # This provider is a reasoning model, and that shapes both calls below.
@@ -95,6 +98,14 @@ figure a person must confirm, and "unsupported" when no basis exists.
 4. For solar_block, include effect parameters "solar_block_fraction" (0-1, a \
 fraction of the direct beam) and "shaded_length_m".
 
+4b. For tmrt_modifier, include "tmrt_delta_c" - the measured change in MEAN \
+RADIANT TEMPERATURE a pedestrian standing over the treated surface receives, \
+in degrees C - and "treated_length_m". Mind the SIGN. A reflective surface \
+lowers the temperature of the ground and RAISES the shortwave a person \
+receives, so measured midday Tmrt over reflective pavement is HIGHER, a \
+positive delta, even though surface temperature falls. Never report a \
+surface-temperature change as if it were a Tmrt change.
+
 5. Never predict a health outcome. Never state a UTCI or heat-load reduction \
 unless a study measured one - the engine computes those, not you."""
 
@@ -149,6 +160,26 @@ def _chat(messages: list[dict], json_mode: bool = False,
     return (resp.get("choices") or [{}])[0].get("message", {}).get("content", "")
 
 
+def _json_chat(messages: list[dict], timeout: float = TIMEOUT_S,
+               temperature: float = 0.0) -> dict:
+    """A JSON call that survives one empty reply.
+
+    This provider occasionally returns a 200 with empty content - seen while
+    investigating max_tokens, and again at temperature 0 - and a demo should
+    not fail on a flake that a second attempt fixes. Two tries, then the
+    caller's own fallback takes over.
+    """
+    last: Exception | None = None
+    for _ in range(2):
+        try:
+            return _json_object(_chat(messages, json_mode=True,
+                                      timeout=timeout,
+                                      temperature=temperature))
+        except (RuntimeError, json.JSONDecodeError) as exc:
+            last = exc
+    raise RuntimeError(f"the model returned nothing usable twice: {last}")
+
+
 def _json_object(text: str) -> dict:
     """Parse the reply as one JSON object, tolerating a code fence.
 
@@ -197,10 +228,14 @@ def normalise(draft: dict) -> tuple[dict, list[str]]:
 
 def draft_solution(text: str) -> dict:
     """Turn a described measure into a typed, normalised draft."""
-    raw = _chat([{"role": "system", "content": SYSTEM},
-                 {"role": "user", "content": text[:800]}], json_mode=True)
-    draft, downgraded = normalise(_json_object(raw))
-    return {"draft": draft, "downgraded": downgraded, "raw": raw[:4000]}
+    # Temperature 0 here too. At 0.2 the same proposal drafted differently
+    # between calls - one reply carried a unit cost and the next did not, so
+    # the gate refused a measure it had just accepted. A demo cannot have
+    # that, and neither can a cache.
+    obj = _json_chat([{"role": "system", "content": SYSTEM},
+                      {"role": "user", "content": text[:800]}])
+    draft, downgraded = normalise(obj)
+    return {"draft": draft, "downgraded": downgraded}
 
 
 def clarify(text: str, missing: list[str], why: str) -> list[str]:
@@ -341,10 +376,9 @@ def compile_program(text: str, vocabulary: dict) -> dict:
     # Temperature 0: the same sentence must compile to the same program every
     # time. At 0.2 one run resolved "Craig Street" to South and the next
     # declined it as ambiguous, which is not something to discover on stage.
-    raw = _chat([{"role": "system", "content": PROGRAM_SYSTEM},
-                 {"role": "user", "content": f"{ctx}\n\nSENTENCE: {text[:600]}"}],
-                json_mode=True, temperature=0.0)
-    return _json_object(raw)
+    return _json_chat([{"role": "system", "content": PROGRAM_SYSTEM},
+                       {"role": "user",
+                        "content": f"{ctx}\n\nSENTENCE: {text[:600]}"}])
 
 
 REPAIR_PROMPT = """The program you produced was refused by the engine. Fix \

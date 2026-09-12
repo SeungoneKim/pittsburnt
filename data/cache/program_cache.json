@@ -153,5 +153,47 @@
   "model": "IFM/K2-Horizon-375B-A23B",
   "compiled_at": "2026-09-12T20:14:43Z",
   "text": "Prioritise students at noon and spend at least a third on Fifth Avenue"
+ },
+ "draft|75e643f7": {
+  "spec": {
+   "name": "Fabric shade sails over footway",
+   "geometry": "linear",
+   "mechanism": "solar_block",
+   "eligibleSite": "Busiest pedestrian blocks in Oakland, Pittsburgh (candidate corridors: Forbes Ave and Fifth Ave; exact blocks to be confirmed)",
+   "unitCost": {
+    "capexUsd": 1200,
+    "annualOpexUsd": 50,
+    "sourceStatus": "user_assumption"
+   },
+   "effect": [
+    {
+     "parameter": "solar_block_fraction",
+     "value": 0.85,
+     "unit": "fraction",
+     "sourceStatus": "user_assumption"
+    },
+    {
+     "parameter": "shaded_length_m",
+     "value": 150,
+     "unit": "m",
+     "sourceStatus": "user_assumption"
+    }
+   ],
+   "confidence": "medium",
+   "openQuestions": [
+    "Unit basis for unitCost: is capex per linear meter of footway shaded (assumed ~3 m sail coverage width)? Please confirm or provide local contractor quotes.",
+    "Which specific blocks are the 'busiest' (e.g., Forbes Ave between Bellefield Ave and Highland Ave, Fifth Ave near the Cathedral)? Block lengths set shaded_length_m.",
+    "Fabric specification (UPF rating, color, weave density) - denser/darker fabrics block more direct beam but may increase longwave re-radiation; confirm target solar_block_fraction.",
+    "Mounting approach: pole-mounted vs. building-mounted; pole spacing, foundations, and conflicts with utilities, signage, and street trees.",
+    "Structural loading for Pittsburgh wind and snow; required clear height over the footway and ADA clearance.",
+    "Maintenance responsibility, cleaning, and fabric replacement cycle (typically 10-15 years) to validate annualOpexUsd.",
+    "Winter removal vs. year-round installation preference."
+   ]
+  },
+  "downgraded": [],
+  "elapsed_s": 31.21,
+  "model": "IFM/K2-Horizon-375B-A23B",
+  "compiled_at": "2026-09-12T20:53:21Z",
+  "text": "Put up fabric shade sails over the footway on the busiest blocks."
  }
 }

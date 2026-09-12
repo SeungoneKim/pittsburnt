@@ -278,6 +278,26 @@ def adapt(req: AdaptRequest) -> dict:
 # that is missing. The demo never depends on a live model call.
 EXAMPLE_DRAFTS = [
     {
+        "name": "Reflective cool pavement",
+        "geometry": "area", "mechanism": "tmrt_modifier",
+        "eligibleSite": "carriageway resurfacing programme",
+        "unitCost": {"capexUsd": 18000, "annualOpexUsd": 400,
+                     "sourceStatus": "user_assumption"},
+        "effect": [
+            # The sign is the point. ASU's Phoenix measurements found a
+            # reflective surface LOWERS pavement temperature and RAISES
+            # midday mean radiant temperature over it, because a pedestrian
+            # standing there receives the reflected shortwave.
+            {"parameter": "tmrt_delta_c", "value": 5.5,
+             "unit": "C at midday", "sourceStatus": "user_assumption"},
+            {"parameter": "treated_length_m", "value": 60, "unit": "m",
+             "sourceStatus": "user_assumption"},
+        ],
+        "confidence": "low",
+        "openQuestions": ["Is the +5.5 C midday Tmrt figure representative of "
+                          "Oakland's street geometry, or of Phoenix's?"],
+    },
+    {
         "name": "Shade sail over the kerb",
         "geometry": "linear", "mechanism": "solar_block",
         "eligibleSite": "footway with 3 m clearance and anchor points",
@@ -291,15 +311,6 @@ EXAMPLE_DRAFTS = [
         ],
         "confidence": "medium",
         "openQuestions": ["Does the $4,200 include anchor engineering?"],
-    },
-    {
-        "name": "Reflective cool pavement",
-        "geometry": "area", "mechanism": "tmrt_modifier",
-        "eligibleSite": "carriageway resurfacing programme",
-        "unitCost": {"capexUsd": 30000, "sourceStatus": "user_assumption"},
-        "effect": [],
-        "confidence": "low",
-        "openQuestions": ["Is there measured Tmrt by hour over the treatment?"],
     },
     {
         "name": "Misted shaded rest node",
@@ -326,6 +337,8 @@ EXAMPLE_DRAFTS = [
 class SolutionChatRequest(BaseModel):
     text: str = Field(..., min_length=3, max_length=800,
                       examples=["Add misted rest shelters near busy stops."])
+    # Force a fresh call even when a draft is stored.
+    recompile: bool = False
 
 
 class DraftRequest(BaseModel):
@@ -378,14 +391,41 @@ def solution_chat(req: SolutionChatRequest) -> dict:
     if not llm.configured():
         return {**cached,
                 "reason": "IFM_BASE_URL / IFM_API_KEY / IFM_MODEL are not set"}
+
+    # Drafting is the slowest call in the app - 25-90 s - so a draft that has
+    # been made before is replayed, on the same terms as a compiled program:
+    # deterministic input, stored output, and the reply says which it was.
+    key = "draft|" + _cache_key(req.text, "-", 0, "-", 0)
+    hit = _program_cache.get(key)
+    if hit and not req.recompile:
+        draft = copy.deepcopy(hit["spec"])
+        return {"mode": "live", "source": "cache", "provider": llm.provider(),
+                "draft": draft, "verdict": _verdict(draft),
+                "downgraded": hit.get("downgraded", []),
+                "elapsed_s": hit.get("elapsed_s"),
+                "compiled_at": hit.get("compiled_at")}
+
+    started = _time.time()
     try:
         out = llm.draft_solution(req.text)
     except Exception as exc:                  # network, quota, malformed reply
         return {**cached, "reason": f"the model is unavailable: {exc}"}
+    elapsed = round(_time.time() - started, 2)
 
-    return {"mode": "live", "provider": llm.provider(),
-            "draft": out["draft"],
-            "verdict": _verdict(out["draft"]),
+    verdict = _verdict(out["draft"])
+    # Only a draft that clears the gate is worth replaying; caching a refusal
+    # would freeze a missing field into a permanent no.
+    if verdict["can_simulate"]:
+        _store_program(key, {
+            "spec": copy.deepcopy(out["draft"]),
+            "downgraded": out["downgraded"], "elapsed_s": elapsed,
+            "model": os.environ.get("IFM_MODEL", ""),
+            "compiled_at": _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime()),
+            "text": req.text,
+        })
+    return {"mode": "live", "source": "live", "provider": llm.provider(),
+            "draft": out["draft"], "elapsed_s": elapsed,
+            "verdict": verdict,
             # Said plainly, because it changes what the badges mean.
             "downgraded": out["downgraded"]}
 
@@ -420,11 +460,19 @@ def solution_validate(req: DraftRequest) -> dict:
 
 @app.post("/solutions/simulate")
 def solution_simulate(req: SolutionSimulateRequest) -> dict:
-    """Price and site a user-confirmed custom solution alongside the built-ins.
+    """Price a user-confirmed measure, and benchmark it against the built-ins.
 
-    The draft only reaches the optimiser after clearing the gate. Placement,
-    spacing, spend and every impact number are the engine's, exactly as they
-    are for a street tree.
+    Three deployments at the same budget, the same hour and the same people:
+    the proposed measure, street trees, and shaded waiting shelters. Each
+    spends the whole budget on its own best ground, so every measure gets its
+    most favourable showing and none of them is quietly skipped for being
+    unhelpful - which is what the optimiser would do, and is the wrong answer
+    to "what happens if we build this".
+
+    That matters most when the answer is unwelcome. Reflective pavement
+    lowers surface temperature and RAISES mean radiant temperature at midday,
+    so it can spend a whole budget and leave pedestrians worse off. The engine
+    reports the sign it computes.
     """
     try:
         spec = solutions.to_intervention(req.draft)
@@ -435,57 +483,154 @@ def solution_simulate(req: SolutionSimulateRequest) -> dict:
     local = copy.copy(adapter)
     local.interventions = {k: dict(v) for k, v in adapter.interventions.items()}
     key = local.register(spec)
-    # Two runs, because the interesting answer is usually the second one.
-    #
-    # SOLO spends the whole budget on the proposed measure alone: what it
-    # would do if it were the only option, which is what a person proposing it
-    # actually wants to see - and what the map can draw.
-    #
-    # MIXED lets it compete with the built-ins. A $4,200 sail covering 12 m
-    # loses to a $1,200 tree covering 8 m on shade per dollar, so it is often
-    # bought zero times. That is not a failure to report quietly: it is the
-    # measure's answer, and the optimiser's own trace explains it.
+
     try:
-        solo = local.optimize(req.scenario, req.hour, req.persona,
-                              req.budget_usd, [key], req.policy)
+        deployed = {k: local.deploy(req.scenario, req.hour, req.persona,
+                                    req.budget_usd, k)
+                    for k in (key, "tree", "shaded_shelter")}
+        # What the optimiser does when the measure has to compete for money.
         mixed = local.optimize(req.scenario, req.hour, req.persona,
                                req.budget_usd, None, req.policy)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
-    out = solo
+
+    before = deployed[key]["before"]
+    labels = {key: spec["label"], "tree": INTERVENTIONS["tree"]["label"],
+              "shaded_shelter": INTERVENTIONS["shaded_shelter"]["label"]}
+
+    def row(k: str) -> dict:
+        d = deployed[k]
+        after = d["after"]
+        return {
+            "key": k, "label": labels[k],
+            "is_custom": k == key,
+            "mechanism": local.interventions[k].get("mechanism")
+            or ("wait_or_rest" if local.interventions[k].get("protects")
+                == "waiting" else "solar_block"),
+            "unit_cost_usd": local.interventions[k]["cost_usd"],
+            "units": d["count"], "spent_usd": d["spent_usd"],
+            "after_severe": round(after.severe_total, 2),
+            "after_heat_load": round(after.heat_load_total, 2),
+            "after_experienced_utci_c": round(after.experienced_utci_c, 3),
+            "d_severe": round(after.severe_total - before.severe_total, 2),
+            "d_heat_load": round(after.heat_load_total
+                                 - before.heat_load_total, 2),
+            "d_experienced_utci_c": round(after.experienced_utci_c
+                                          - before.experienced_utci_c, 3),
+            # Severe person-minutes avoided per $10,000. Negative when a
+            # measure makes things worse, which is a real outcome, not a bug.
+            "efficiency_per_10k": round(
+                (before.severe_total - after.severe_total)
+                / max(d["spent_usd"], 1) * 10_000, 3),
+        }
+
+    rows = [row(key), row("tree"), row("shaded_shelter")]
+    # The drawable plan is the proposed measure's own deployment, so the map
+    # shows what was actually proposed rather than what beat it.
+    out = deployed[key]
+    plan = _deployment_payload(local, req, key, out)
     return {
-        **_plan_payload(out,
-                        {**req.model_dump(exclude={"draft"}),
-                         "custom_kind": key},
-                        "simulation-recommended allocation under a "
-                        "user-confirmed custom solution; greedy search, not a "
-                        "proven global optimum"),
-        # What the person confirmed, carried alongside so the map can draw it
-        # with its own mark and the result card can name it.
+        **plan,
         "custom": {"key": key, "label": spec["label"],
-                   "cost_usd": spec["cost_usd"], "block": spec["block"],
-                   "shade_m": spec["shade_m"], "mechanism": spec["mechanism"]},
-        # The head-to-head, stated rather than buried. Both sides are the
-        # engine's own numbers over the identical scenario and budget.
-        "comparison": {
-            "solo": {
-                "units": int(solo["counts"].get(key, 0)),
-                "spent_usd": solo["spent_usd"],
-                "after_severe": round(solo["after"].severe_total, 2),
-                "after_heat_load": round(solo["after"].heat_load_total, 2),
-                "reduction_pct": round(solo["reduction_pct"], 2),
+                   "cost_usd": spec["cost_usd"],
+                   "mechanism": spec["mechanism"],
+                   "tmrt_delta_c": spec.get("tmrt_delta_c"),
+                   "shade_m": spec.get("shade_m")},
+        "benchmark": {
+            "budget_usd": req.budget_usd,
+            "scenario": req.scenario, "hour": req.hour,
+            "persona": req.persona,
+            "before": {
+                "severe": round(before.severe_total, 2),
+                "heat_load": round(before.heat_load_total, 2),
+                "experienced_utci_c": round(before.experienced_utci_c, 3),
             },
-            "mixed": {
+            "measures": rows,
+            "optimiser_picks": {
                 "counts": mixed["counts"],
                 "custom_units": int(mixed["counts"].get(key, 0)),
                 "spent_usd": mixed["spent_usd"],
                 "after_severe": round(mixed["after"].severe_total, 2),
-                "after_heat_load": round(mixed["after"].heat_load_total, 2),
                 "reduction_pct": round(mixed["reduction_pct"], 2),
             },
-            "before_severe": round(solo["before"].severe_total, 2),
             "unbought": mixed["rank_trace"].get("unbought", []),
         },
+        "disclaimer": DISCLAIMER,
+    }
+
+
+def _deployment_payload(local, req, key: str, out: dict) -> dict:
+    """A forced deployment, in the same plan shape every other plan uses."""
+    hi = engine.hour_index(req.hour)
+    units = out["units"]
+    deltas = local.deltas(key, units, hi)
+    before, after = out["before"], out["after"]
+    unit_records = local._unit_points(out["placements"])
+    sun_after = np.clip(engine.sun_exposure[:, hi].astype(float)
+                        - deltas.get("sun_delta", 0.0), 0, 1)
+    cond = engine.conditions(req.scenario, req.hour)
+    tm = deltas.get("tmrt_delta")
+    if tm is None:
+        u_sun, u_shade = float(cond["utci_sun_c"]), float(cond["utci_shade_c"])
+        after_utci = sun_after * u_sun + (1 - sun_after) * u_shade
+    else:
+        from engine import utci_from_tmrt
+        u_sun = utci_from_tmrt(cond["air_temp_c"], cond["rh_pct"],
+                               cond["wind_ms"],
+                               float(cond["tmrt_sun_c"]) + tm)
+        u_shade = utci_from_tmrt(cond["air_temp_c"], cond["rh_pct"],
+                                 cond["wind_ms"],
+                                 float(cond["tmrt_shade_c"]) + tm)
+        after_utci = sun_after * u_sun + (1 - sun_after) * u_shade
+    from collections import Counter
+    tally = Counter((p["seg_id"], p["kind"]) for p in out["placements"])
+    h = _spec_hash({"deploy": key, "budget": req.budget_usd,
+                    "scenario": req.scenario, "hour": req.hour,
+                    "persona": req.persona})
+    return {
+        "status": "complete", "snapshot_id": f"solu-{h}", "input_hash": h,
+        "budget_usd": req.budget_usd, "spent_usd": out["spent_usd"],
+        "counts": {key: out["count"]},
+        "metric_used": "severe_person_minutes" if before.severe_total
+        else "heat_load",
+        "before_severe": round(before.severe_total, 2),
+        "after_severe": round(after.severe_total, 2),
+        "before_walking_severe": round(before.walking_severe_total, 2),
+        "after_walking_severe": round(after.walking_severe_total, 2),
+        "before_waiting_severe": round(before.waiting_severe_total, 2),
+        "after_waiting_severe": round(after.waiting_severe_total, 2),
+        "before_heat_load": round(before.heat_load_total, 2),
+        "after_heat_load": round(after.heat_load_total, 2),
+        "before_experienced_utci_c": round(before.experienced_utci_c, 2),
+        "after_experienced_utci_c": round(after.experienced_utci_c, 2),
+        "reduction_pct": round(
+            100.0 * (before.severe_total - after.severe_total)
+            / max(before.severe_total, 1e-9), 2),
+        "impact_scopes": _impact_scopes(before, after),
+        "policy": "forced_deployment",
+        "policy_label": "Deployed on its own best ground",
+        "service_floor": [],
+        "after_sun": [round(float(x), 4) for x in sun_after],
+        "after_utci_c": [round(float(x), 2) for x in np.asarray(after_utci)
+                         * np.ones(len(engine.seg_ids))],
+        "after_shelter_coverage": [
+            round(float(x), 4) for x in np.clip(
+                engine.shelter_coverage.astype(float)
+                + deltas.get("shelter_delta", 0.0), 0, 1)],
+        "unit_placements": unit_records,
+        "shade_footprints": local.shade_footprints(unit_records),
+        "rank_trace": {"objective": "forced deployment, not an optimisation",
+                       "claim": "the whole budget spent on one measure, on "
+                                "the segments carrying the most person-"
+                                "minutes first",
+                       "by_kind": {}, "best_site": None,
+                       "placements_considered": len(out["placements"]),
+                       "unspent_usd": round(req.budget_usd
+                                            - out["spent_usd"], 2),
+                       "unbought": []},
+        "placements": [{"seg_id": sid, "kind": kd, "count": n}
+                       for (sid, kd), n in tally.items()],
+        **_segments_payload(after, 20),
     }
 
 

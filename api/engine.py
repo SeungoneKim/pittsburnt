@@ -47,12 +47,37 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
+import thermofeel as _tf
 
 from provenance import (build_catalogue, canonical, fnv1a, input_hash,
                         snapshot_id)
 
 ROOT = Path(__file__).resolve().parent.parent
 CACHE = ROOT / "data" / "cache"
+
+def _vapour_pressure_hpa(temp_c, rh_pct):
+    t = np.asarray(temp_c, dtype=float)
+    es = 6.112 * np.exp(17.67 * t / (t + 243.5))
+    return es * np.asarray(rh_pct, dtype=float) / 100.0
+
+
+def utci_from_tmrt(temp_c, rh_pct, wind_ms, tmrt_c):
+    """UTCI in degrees C from the four inputs the index is defined on.
+
+    The same wrapper as pipeline/utci.py, needed here because a measure that
+    changes mean radiant temperature cannot be scored from the precomputed
+    per-scenario constants - its whole effect is on Tmrt, which is upstream of
+    them. A property test asserts this reproduces the cached scenario values,
+    so the two implementations cannot drift apart silently.
+    """
+    t_k = np.asarray(temp_c, dtype=float) + 273.15
+    # The polynomial is fitted for 0.5-17 m/s; clamp rather than extrapolate.
+    va = np.clip(np.asarray(wind_ms, dtype=float), 0.5, 17.0)
+    mrt_k = np.asarray(tmrt_c, dtype=float) + 273.15
+    return np.asarray(_tf.calculate_utci(
+        t2_k=t_k, va=va, mrt=mrt_k,
+        ehPa=_vapour_pressure_hpa(temp_c, rh_pct)), dtype=float) - 273.15
+
 
 SEVERE_UTCI_C = 38.0        # "Very Strong Heat Stress"
 HEAT_LOAD_BASE_C = 26.0     # onset of "Moderate Heat Stress"
@@ -219,12 +244,19 @@ class Engine:
 
     def crash_test(self, scenario: str, hour: int, persona: str,
                    sun_delta: np.ndarray | None = None,
-                   shelter_delta: np.ndarray | None = None) -> Result:
+                   shelter_delta: np.ndarray | None = None,
+                   tmrt_delta: np.ndarray | None = None) -> Result:
         """Score every segment under one scenario.
 
         sun_delta reduces the sun on the footway (trees). shelter_delta adds
         shelter coverage at transit stops, which protects waiting time only.
         Both are per-segment fractions in [0, 1]; None gives the baseline.
+
+        tmrt_delta shifts mean radiant temperature per segment, in degrees C,
+        and UTCI is recomputed from it. This is how a surface treatment is
+        scored, and the sign is not assumed: a treatment that raises Tmrt
+        raises UTCI, which is what the Phoenix cool-pavement measurements
+        found at midday even though surface temperature fell.
         """
         hi = self.hour_index(hour)
         p_idx = self.persona_index(persona)
@@ -244,12 +276,22 @@ class Engine:
         # waiting sees whatever sun the surrounding footway sees.
         wait_sun = (1.0 - cover) * sun
 
-        u_sun = float(cond["utci_sun_c"])
-        u_shade = float(cond["utci_shade_c"])
-        sev_sun = float(u_sun >= SEVERE_UTCI_C)
-        sev_shade = float(u_shade >= SEVERE_UTCI_C)
-        load_sun = max(u_sun - HEAT_LOAD_BASE_C, 0.0)
-        load_shade = max(u_shade - HEAT_LOAD_BASE_C, 0.0)
+        if tmrt_delta is None:
+            u_sun = float(cond["utci_sun_c"])
+            u_shade = float(cond["utci_shade_c"])
+        else:
+            # Per-segment now, because Tmrt is. Recomputed through the same
+            # polynomial the pipeline used rather than nudged by a constant.
+            u_sun = utci_from_tmrt(cond["air_temp_c"], cond["rh_pct"],
+                                   cond["wind_ms"],
+                                   float(cond["tmrt_sun_c"]) + tmrt_delta)
+            u_shade = utci_from_tmrt(cond["air_temp_c"], cond["rh_pct"],
+                                     cond["wind_ms"],
+                                     float(cond["tmrt_shade_c"]) + tmrt_delta)
+        sev_sun = (np.asarray(u_sun) >= SEVERE_UTCI_C).astype(float)
+        sev_shade = (np.asarray(u_shade) >= SEVERE_UTCI_C).astype(float)
+        load_sun = np.maximum(np.asarray(u_sun) - HEAT_LOAD_BASE_C, 0.0)
+        load_shade = np.maximum(np.asarray(u_shade) - HEAT_LOAD_BASE_C, 0.0)
 
         # Time splits between sun and shade in proportion to the unshaded
         # fraction, so each part is scored on its own UTCI.
@@ -280,7 +322,7 @@ class Engine:
             walking_severe=walk_sev, waiting_severe=wait_sev,
             walking_severe_total=float(walk_sev.sum()),
             waiting_severe_total=float(wait_sev.sum()),
-            utci_sun_c=u_sun, utci_shade_c=u_shade,
+            utci_sun_c=float(np.mean(u_sun)), utci_shade_c=float(np.mean(u_shade)),
             experienced_utci_c=experienced,
             person_minutes_total=person_minutes,
             severe_total=float(severe.sum()),
@@ -714,6 +756,64 @@ class Adapter:
             if best:
                 picks.append(best)
         return picks
+
+    def deploy(self, scenario: str, hour: int, persona: str,
+               budget_usd: float, kind: str) -> dict:
+        """Spend the whole budget on one measure, whether it helps or not.
+
+        The optimiser only ever buys a unit that improves the objective, so a
+        measure that makes things worse is bought zero times and its effect
+        never appears. That is the right answer to "what should we build",
+        and the wrong answer to "what happens if we build this" - which is the
+        question a person proposing a measure is actually asking.
+
+        So this deploys it on its own best ground: the segments carrying the
+        most person-minutes first, up to capacity, until the money runs out.
+        A measure that helps therefore gets its most favourable showing, and
+        one that hurts is shown hurting rather than quietly skipped.
+        """
+        hi = self.e.hour_index(hour)
+        p = self.e.persona_index(persona)
+        spec = self.interventions[kind]
+        cost = float(spec["cost_usd"])
+        caps = self.max_units(kind)
+        demand = (self.e.minutes[:, p, hi].astype(float)
+                  + self.e.wait_minutes[:, p, hi].astype(float))
+
+        units = np.zeros(len(self.e.seg_ids), dtype=int)
+        spent = 0.0
+        log: list[dict] = []
+        for i in np.argsort(-demand):
+            if demand[i] <= 0:
+                break
+            room = int(caps[i])
+            while units[i] < room and spent + cost <= budget_usd:
+                units[i] += 1
+                spent += cost
+                log.append({"seg_id": self.e.seg_ids[i], "kind": kind,
+                            "cost_usd": cost, "severe_minutes_saved": 0.0,
+                            "heat_load_saved": 0.0, "phase": "deployed"})
+            if spent + cost > budget_usd:
+                break
+
+        before = self.e.crash_test(scenario, hour, persona)
+        after = self.e.crash_test(scenario, hour, persona,
+                                  **self.deltas(kind, units, hi))
+        return {"units": units, "spent_usd": spent, "count": int(units.sum()),
+                "before": before, "after": after, "placements": log}
+
+    def deltas(self, kind: str, units: np.ndarray, hour_idx: int) -> dict:
+        """The environmental change one measure's units produce."""
+        spec = self.interventions[kind]
+        if spec.get("mechanism") == "tmrt_modifier":
+            # Partial coverage scales the shift, exactly as shade coverage
+            # scales sun removal: treating half a segment moves half its Tmrt.
+            covered = np.clip(units * float(spec["treated_length_m"])
+                              / np.maximum(self.lengths, 1e-6), 0.0, 1.0)
+            return {"tmrt_delta": covered * float(spec["tmrt_delta_c"])}
+        if spec.get("protects") == "waiting":
+            return {"shelter_delta": self.shelter_delta(units)}
+        return {"sun_delta": self.sun_delta(kind, units, hour_idx)}
 
     def optimize(self, scenario: str, hour: int, persona: str, budget_usd: float,
                  kinds: list[str] | None = None,

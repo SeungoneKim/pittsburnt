@@ -247,10 +247,44 @@ choreography does.
 `make test-program` covers the solver with no model or network needed;
 `make gates-program` drives both demo sentences through the real UI.
 
-Without a key nothing breaks. The panel returns cached example drafts that
-still demonstrate the whole gate — one measure that can be simulated and
-three that honestly cannot, each naming the evidence it is missing — and the
+Without a key nothing breaks. The panel ships with worked example drafts that
+demonstrate the whole gate — two measures that can be simulated and two that
+honestly cannot, each naming the evidence it is missing — and the
 Crash → Adjust → Re-test loop never touches the network.
+
+#### The cool-pavement result
+
+The default example is **reflective cool pavement**, and it is there because
+the honest answer is the unwelcome one.
+
+A surface treatment acts through **mean radiant temperature**, so it cannot be
+scored from the per-scenario UTCI constants — its whole effect is upstream of
+them. The engine therefore recomputes UTCI from Tmrt through the same
+`thermofeel` polynomial the pipeline used (a property test asserts it
+reproduces the cached scenario values, so the two cannot drift apart). And the
+sign is not assumed: ASU's Phoenix measurements found reflective pavement
+lowers **surface** temperature and **raises** midday Tmrt, because a person
+standing on it receives the reflected shortwave.
+
+Deployed at $250,000 against the two built-ins, on the same hour, people and
+budget:
+
+| Measure | Units | Spend | Heat load | Experienced UTCI |
+|---|---|---|---|---|
+| Reflective cool pavement | 13 | $234,000 | **+40 (worse)** | **+0.03 °C** |
+| Street tree | 208 | $249,600 | −394 | −0.30 °C |
+| Shaded waiting shelter | 16 | $240,000 | −21 | −0.02 °C |
+
+Each measure spends the whole budget on its own best ground, so none is
+quietly skipped for being unhelpful — which is what the optimiser would do,
+and is the wrong answer to *"what happens if we build this"*. Asked to choose,
+the optimiser buys 170 trees, 3 shelters and **zero** cool pavement.
+
+A measure that makes things worse is a finding, not a failure, and the
+comparison screen says so in words before it shows a number.
+
+`make warm-programs` also warms the solution drafts; `make gates-solution`
+drives the whole panel and its comparison screen through the UI.
 
 ## Rebuilding the data
 

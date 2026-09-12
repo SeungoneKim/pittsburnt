@@ -39,13 +39,17 @@ MECHANISMS: dict[str, dict] = {
                 "a walker passes along.",
     },
     "tmrt_modifier": {
-        "status": "guarded",
+        "status": "simulate_now",
         "summary": "Changes surface radiative behaviour, like cool pavement.",
-        "requires": ["tmrt_delta_c_by_hour", "cost_usd"],
-        "note": "Phoenix measured lower pavement surface temperature but "
-                "HIGHER midday mean radiant temperature over the treatment. A "
-                "generic 'cool pavement = lower pedestrian UTCI' factor is "
-                "therefore refused; hourly measured Tmrt is required.",
+        "requires": ["tmrt_delta_c", "treated_length_m", "cost_usd"],
+        "note": "Scored through mean radiant temperature, which is where a "
+                "surface treatment acts, and UTCI is recomputed from it. The "
+                "sign is NOT assumed: Phoenix measured lower pavement surface "
+                "temperature but HIGHER midday Tmrt over the treatment, so a "
+                "reflective surface can raise pedestrian heat stress even "
+                "while the ground under it gets cooler. Supply the measured "
+                "Tmrt change and the engine will report whichever way it "
+                "goes.",
     },
     "microclimate_node": {
         "status": "new_adapter",
@@ -144,6 +148,19 @@ def validate(draft: dict) -> Verdict:
         reasons.append("solar_block_fraction must sit in (0, 1]; "
                        f"{frac} is not a fraction of the direct beam.")
 
+    # A surface treatment must say which way it moves Tmrt, and by how much.
+    # A zero is not evidence of no effect, it is an unfilled field.
+    shift = _num((effects.get("tmrt_delta_c") or {}).get("value"))
+    if mech == "tmrt_modifier":
+        if shift is not None and abs(shift) > 25:
+            reasons.append(f"a {shift:+.1f} C shift in mean radiant "
+                           f"temperature is outside anything measured for a "
+                           f"street surface.")
+        if shift == 0:
+            reasons.append("tmrt_delta_c is zero, which is an empty field "
+                           "rather than a measurement of no effect.")
+            missing.append("effect.tmrt_delta_c")
+
     if spec["status"] == "guarded":
         reasons.append(spec["note"])
         questions.append("Do you have measured mean radiant temperature by "
@@ -162,7 +179,8 @@ def validate(draft: dict) -> Verdict:
     can = (spec["status"] == "simulate_now" and not missing
            and not any(str(e.get("sourceStatus")) == "unsupported"
                        for e in effects.values())
-           and (frac is None or 0 < frac <= 1))
+           and (frac is None or 0 < frac <= 1)
+           and (shift is None or abs(shift) <= 25))
 
     status = "can_simulate" if can else (
         "cannot_simulate" if spec["status"] == "simulate_now"
@@ -184,7 +202,7 @@ def to_intervention(draft: dict) -> dict:
         raise ValueError("; ".join(v.reasons) or "draft did not clear the gate")
 
     effects = {str(e["parameter"]): e for e in draft["effect"]}
-    block = float(effects["solar_block_fraction"]["value"])
+    block = float((effects.get("solar_block_fraction") or {}).get("value") or 0.0)
     cost = float(draft["unitCost"]["capexUsd"])
     mech = str(draft["mechanism"])
 
@@ -197,7 +215,13 @@ def to_intervention(draft: dict) -> dict:
         "custom": True,
         "mechanism": mech,
     }
-    if mech == "wait_or_rest":
+    if mech == "tmrt_modifier":
+        spec["tmrt_delta_c"] = float(effects["tmrt_delta_c"]["value"])
+        spec["treated_length_m"] = float(effects["treated_length_m"]["value"])
+        spec["shade_m"] = spec["treated_length_m"]
+        # It changes the radiant environment, not the sun on the footway.
+        spec["block"] = 0.0
+    elif mech == "wait_or_rest":
         # Covers stationary time at a validated stop, exactly as a shelter
         # does, and is limited to the same real sites.
         spec["shade_m"] = 4.0

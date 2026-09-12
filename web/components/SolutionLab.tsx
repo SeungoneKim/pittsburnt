@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from "react";
 
-import type { AdaptResult, Selection, SolutionComparison } from "@/lib/types";
+import BenchmarkModal from "@/components/BenchmarkModal";
+import type { Benchmark } from "@/components/BenchmarkModal";
+import type { AdaptResult, Selection } from "@/lib/types";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -47,8 +49,9 @@ interface ChatReply {
 
 /** The plan the engine built, in the shape the map already renders. */
 type SimResult = AdaptResult & {
-  custom: { key: string; label: string; cost_usd: number; shade_m: number };
-  comparison: SolutionComparison;
+  custom: { key: string; label: string; cost_usd: number;
+    mechanism: string; tmrt_delta_c: number | null };
+  benchmark: Benchmark;
   segments: { severe_minutes: number; heat_load: number }[];
 };
 
@@ -89,6 +92,7 @@ export default function SolutionLab({ sel, onPlan, onClose }: {
   const [reply, setReply] = useState<ChatReply | null>(null);
   const [provider, setProvider] = useState<Provider | null>(null);
   const [sim, setSim] = useState<SimResult | null>(null);
+  const [showBenchmark, setShowBenchmark] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -170,6 +174,7 @@ export default function SolutionLab({ sel, onPlan, onClose }: {
         const cur = tally.get(k);
         if (cur) cur.count += 1; else tally.set(k, { ...q, count: 1 });
       }
+      setShowBenchmark(true);
       onPlan({
         ...plan,
         metric_values: plan.segments.map(
@@ -186,6 +191,11 @@ export default function SolutionLab({ sel, onPlan, onClose }: {
     : (reply?.examples ?? []);
 
   return (
+    <>
+    {showBenchmark && sim && (
+      <BenchmarkModal benchmark={sim.benchmark}
+        onClose={() => setShowBenchmark(false)} />
+    )}
     <div className="pointer-events-auto absolute inset-0 z-40 flex justify-end
       bg-slate-900/25 backdrop-blur-[2px]" onClick={onClose}>
       <aside onClick={(e) => e.stopPropagation()}
@@ -330,57 +340,36 @@ export default function SolutionLab({ sel, onPlan, onClose }: {
             <div className="rounded-xl border-l-4 border-violet-500
               bg-violet-50 p-3">
               <h3 className="text-[14px] font-semibold text-violet-900">
-                {sim.custom.label}, simulated two ways
+                {sim.custom.label} — simulated
               </h3>
-              <p className="mt-0.5 text-[11.5px] text-violet-900/70">
-                Same scenario, same budget, same people. The plan on its own
-                is now drawn on the map behind this panel.
-              </p>
-
-              {/* On its own: what the measure does as the only option. */}
-              <div className="mt-2 rounded-lg bg-white/70 p-2">
-                <div className="text-[11px] font-semibold uppercase
-                  tracking-wider text-violet-800">On its own</div>
-                <Line k={`${sim.comparison.solo.units} units built`}
-                  v={`$${Math.round(sim.comparison.solo.spent_usd).toLocaleString()}`} />
-                <Line k="Severe exposure"
-                  v={`${Math.round(sim.comparison.before_severe)} \u2192 `
-                    + `${Math.round(sim.comparison.solo.after_severe)} `
-                    + `(\u2212${sim.comparison.solo.reduction_pct}%)`} />
+              <div className="mt-1.5 space-y-0.5">
+                <Line k="Units deployed"
+                  v={`${sim.benchmark.measures.find((m) => m.is_custom)?.units ?? 0}`} />
+                <Line k="Spent"
+                  v={`$${Math.round(sim.spent_usd).toLocaleString()}`} />
+                <Line k="Heat load"
+                  v={`${Math.round(sim.before_heat_load).toLocaleString()} \u2192 `
+                    + `${Math.round(sim.after_heat_load).toLocaleString()}`} />
+                <Line k="Experienced UTCI"
+                  v={`${sim.before_experienced_utci_c.toFixed(2)} \u2192 `
+                    + `${sim.after_experienced_utci_c.toFixed(2)} \u00b0C`} />
               </div>
-
-              {/* Against the built-ins: usually the more interesting answer. */}
-              <div className="mt-1.5 rounded-lg bg-white/70 p-2">
-                <div className="text-[11px] font-semibold uppercase
-                  tracking-wider text-violet-800">
-                  Competing with trees and shelters
-                </div>
-                <Line k={`${sim.custom.label} bought`}
-                  v={String(sim.comparison.mixed.custom_units)} />
-                {Object.entries(sim.comparison.mixed.counts)
-                  .filter(([k, n]) => n > 0 && k !== sim.custom.key)
-                  .map(([k, n]) => (
-                    <Line key={k} k={k.replace(/_/g, " ")} v={String(n)} />
-                  ))}
-                <Line k="Severe exposure"
-                  v={`${Math.round(sim.comparison.before_severe)} \u2192 `
-                    + `${Math.round(sim.comparison.mixed.after_severe)} `
-                    + `(\u2212${sim.comparison.mixed.reduction_pct}%)`} />
-              </div>
-
-              {sim.comparison.unbought.map((u) => (
-                <p key={u.kind} className="mt-1.5 text-[11px] leading-snug
-                  text-violet-900/75">{u.reason}</p>
-              ))}
+              <button onClick={() => setShowBenchmark(true)}
+                className="mt-2.5 w-full rounded-lg bg-violet-700 px-3 py-2
+                  text-[12.5px] font-bold uppercase tracking-wide text-white
+                  hover:bg-violet-800">
+                Compare with trees and shelters
+              </button>
               <p className="mt-1.5 text-[11px] text-violet-900/70">
-                Every count, coordinate and impact number here was computed by
-                the deterministic engine under the numbers you confirmed.
+                The deployment is drawn on the map behind this panel. Every
+                number came from the deterministic engine.
               </p>
             </div>
           )}
         </div>
       </aside>
     </div>
+    </>
   );
 }
 

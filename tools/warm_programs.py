@@ -36,6 +36,25 @@ SENTENCES = [
 ]
 
 
+# Measures worth having ready. Cool pavement leads because its honest answer
+# is the surprising one: the engine recomputes UTCI from mean radiant
+# temperature, and a reflective surface raises it even while the ground cools.
+DRAFTS = [
+    "Resurface Forbes and Fifth with reflective cool pavement to bring the "
+    "street temperature down.",
+    "Put up fabric shade sails over the footway on the busiest blocks.",
+]
+
+
+def draft_one(text: str, recompile: bool) -> dict:
+    body = json.dumps({"text": text, "recompile": recompile}).encode()
+    req = urllib.request.Request(f"{API}/solutions/chat", data=body,
+                                 headers={"content-type": "application/json"},
+                                 method="POST")
+    with urllib.request.urlopen(req, timeout=240) as r:
+        return json.loads(r.read())
+
+
 def compile_one(text: str, recompile: bool) -> dict:
     body = json.dumps({"text": text, "recompile": recompile}).encode()
     req = urllib.request.Request(f"{API}/program/compile", data=body,
@@ -67,7 +86,34 @@ def main() -> int:
         for r in v["reasons"]:
             print(f"   ! {r[:100]}")
         failures += not v["ok"]
-    print(f"\n{len(SENTENCES) - failures}/{len(SENTENCES)} stored and replayable")
+    print(f"\n{len(SENTENCES) - failures}/{len(SENTENCES)} programs stored\n")
+
+    print(f"warming {len(DRAFTS)} solution drafts")
+    for n, text in enumerate(DRAFTS, 1):
+        started = time.time()
+        try:
+            out = draft_one(text, recompile)
+        except (urllib.error.URLError, TimeoutError) as exc:
+            print(f"{n}. FAILED  {text[:50]}...\n   {exc}")
+            failures += 1
+            continue
+        took = time.time() - started
+        if out.get("mode") != "live":
+            print(f"{n}. UNAVAILABLE  {out.get('reason', '')[:70]}")
+            failures += 1
+            continue
+        v = out["verdict"]
+        d = out.get("draft") or {}
+        eff = ", ".join(f"{e['parameter']}={e['value']}"
+                        for e in d.get("effect", []))
+        print(f"{n}. {'ok  ' if v['can_simulate'] else 'REFUSED'} "
+              f"[{out.get('source') or 'live':5}] {took:5.1f}s  "
+              f"{d.get('name', '(no name)')[:44]}")
+        print(f"   {d.get('mechanism', '?')}: {eff or 'no effect parameters'}")
+        for r in v["reasons"][:2]:
+            print(f"   ! {r[:96]}")
+        failures += not v["can_simulate"]
+    print(f"\ndone - run `make gates-solution` to drive them through the UI")
     return 1 if failures else 0
 
 

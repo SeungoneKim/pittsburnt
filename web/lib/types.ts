@@ -231,7 +231,6 @@ export interface AdaptResult {
   placements: Placement[];
   /** Present only when a user-confirmed custom solution built this plan. */
   custom?: CustomSolution;
-  comparison?: SolutionComparison;
 }
 
 /** A measure a person proposed, gate-checked and confirmed, then priced. */
@@ -244,24 +243,7 @@ export interface CustomSolution {
   mechanism: string;
 }
 
-/**
- * The same measure run two ways over the identical scenario and budget:
- * alone, and competing with the built-ins. The second number is usually the
- * interesting one - a measure can work and still lose on cost per unit of
- * shade, and that is a finding rather than a failure.
- */
-export interface SolutionComparison {
-  before_severe: number;
-  solo: {
-    units: number; spent_usd: number; after_severe: number;
-    after_heat_load: number; reduction_pct: number;
-  };
-  mixed: {
-    counts: Record<string, number>; custom_units: number; spent_usd: number;
-    after_severe: number; after_heat_load: number; reduction_pct: number;
-  };
-  unbought: { kind: string; label: string; reason: string }[];
-}
+
 
 /** Which data path answered — surfaced in the UI so the mode is never a guess. */
 export type SourceMode = "live" | "fallback";

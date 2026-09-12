@@ -26,6 +26,7 @@ help:
 	@echo "  make gates-ui          - the 2.7 UI checklist at 1366x768 and 1920x1080"
 	@echo "  make gates-live        - Beta panel against the real model (needs a key)"
 	@echo "  make gates-program     - the demo sentence, compiled and solved (needs a key)"
+	@echo "  make gates-solution    - Add a solution + the three-way comparison screen"
 	@echo "  make warm-programs     - compile the example sentences once, so a demo needs no network"
 	@echo ""
 	@echo "Rebuild the data (each step caches; run only what you need)"
@@ -100,6 +101,11 @@ gates-live:
 # HiGHS. Needs a key, so it is separate from `gates`.
 gates-program:
 	node tests/program_gate.mjs
+
+# Add a solution (Beta) and its comparison screen, including the assertion
+# that reflective cool pavement is shown making things WORSE.
+gates-solution:
+	node tests/solution_lab_gate.mjs
 
 # Compile the shipped example sentences once and store them. Compiling is the
 # only slow, networked step in the app; after this the panel replays stored
