@@ -32,6 +32,9 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# ...but the template must ship: it is how a teammate learns which variables
+# exist and that the Mapbox value must be a public pk. token.
+!.env.example
 
 # vercel
 .vercel
