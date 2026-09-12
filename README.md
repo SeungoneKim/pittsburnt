@@ -219,8 +219,33 @@ seeing the footway's own sun, is linearised exactly with a big-M pair on the 84
 segments that carry both a stop and plantable sites. ~800 variables, solved in
 0.15 s, with a certified gap on screen.
 
+### Warming the examples
+
+Compiling is the only slow, networked step in the whole app — 8–25 s against a
+reasoning model, and the one thing a venue's wifi can break. It is also
+deterministic: temperature 0, a fixed prompt, a fixed vocabulary. So compiled
+programs are stored in `data/cache/program_cache.json` and replayed.
+
+```bash
+make warm-programs        # needs the API running and a key
+```
+
+After that the panel answers the example sentences with no network at all, the
+same offline guarantee the crash-test and adapt paths already make. A compiled
+program is only stored if it survived every check, so an ambiguous sentence
+stays ambiguous rather than being frozen into a wrong answer — and every reply
+says on screen whether it was **compiled live** or **replayed**, and how long
+the original compile took.
+
+The panel shows the five real steps while they run — sending or restoring,
+checking names, auditing against your words, handing to HiGHS, proving
+optimal — with the elapsed seconds ticking during a live call. The staging
+does not invent work: it waits for the real answer and then walks the
+remaining checks at a pace a person can follow, exactly as the crash-test
+choreography does.
+
 `make test-program` covers the solver with no model or network needed;
-`make gates-program` drives the demo sentence through the real UI.
+`make gates-program` drives both demo sentences through the real UI.
 
 Without a key nothing breaks. The panel returns cached example drafts that
 still demonstrate the whole gate — one measure that can be simulated and

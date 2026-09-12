@@ -16,6 +16,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 import copy
+import os
+import time as _time
 
 import llm
 import program
@@ -480,6 +482,50 @@ def _vocabulary(scenario: str, hour: int, persona: str, budget: float) -> dict:
     }
 
 
+# --- compiled-program cache ------------------------------------------------
+#
+# Compiling is the one slow, networked step in the whole app: 8-25 s against a
+# reasoning model, and the only thing here that can fail because a venue's
+# wifi is bad. It is also deterministic - temperature 0, a fixed prompt and a
+# fixed vocabulary - so the same sentence compiles to the same program every
+# time, and replaying a stored one is reuse rather than fabrication.
+#
+# The cache is written to disk so a demo that has been warmed once never
+# needs the network again, matching the offline guarantee the rest of the app
+# already makes. What it never does is hide its own status: every reply says
+# whether it was compiled live or replayed, and when.
+PROGRAM_CACHE = CACHE / "program_cache.json"
+
+
+def _cache_key(text: str, scenario: str, hour: int, persona: str,
+               budget: float) -> str:
+    from provenance import fnv1a
+    # Whitespace and case are not part of the question a planner is asking.
+    norm = " ".join(text.lower().split())
+    return fnv1a(f"{engine.dataset_version}|{norm}|{scenario}|{hour}"
+                 f"|{persona}|{budget:g}")
+
+
+def _load_program_cache() -> dict:
+    if not PROGRAM_CACHE.exists():
+        return {}
+    try:
+        return json.loads(PROGRAM_CACHE.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+_program_cache = _load_program_cache()
+
+
+def _store_program(key: str, payload: dict) -> None:
+    _program_cache[key] = payload
+    try:
+        PROGRAM_CACHE.write_text(json.dumps(_program_cache, indent=1))
+    except OSError:
+        pass          # an unwritable cache is a slower demo, not a broken one
+
+
 def _spec_hash(spec: dict) -> str:
     """A program is part of the question, so it is part of the snapshot."""
     from provenance import fnv1a
@@ -493,6 +539,8 @@ class CompileRequest(BaseModel):
     hour: int = 15
     persona: str = "older_adults"
     budget_usd: float = Field(250000, gt=0)
+    # Force a fresh call even when a compiled program is stored.
+    recompile: bool = False
 
 
 class SolveRequest(BaseModel):
@@ -519,10 +567,24 @@ def program_compile(req: CompileRequest) -> dict:
         raise HTTPException(503, "No model is configured; write the program "
                                  "by hand or use a preset.")
     vocab = _vocabulary(req.scenario, req.hour, req.persona, req.budget_usd)
+    key = _cache_key(req.text, req.scenario, req.hour, req.persona,
+                     req.budget_usd)
+    hit = _program_cache.get(key)
+    if hit and not req.recompile:
+        spec = copy.deepcopy(hit["spec"])
+        v = program.validate_spec(spec, engine)
+        audit = program.audit_references(spec, req.text, engine) if v.ok else []
+        return _compile_reply(spec, v, audit, repaired=hit.get("repaired", False),
+                              source="cache", elapsed_s=hit.get("elapsed_s"),
+                              compiled_at=hit.get("compiled_at"),
+                              model=hit.get("model"))
+
+    started = _time.time()
     try:
         spec = llm.compile_program(req.text, vocab)
     except Exception as exc:
         raise HTTPException(502, f"the model is unavailable: {exc}")
+    elapsed = round(_time.time() - started, 2)
 
     v = program.validate_spec(spec, engine)
     repaired = False
@@ -543,10 +605,35 @@ def program_compile(req: CompileRequest) -> dict:
     # catch that.
     if v.ok:
         audit = program.audit_references(spec, req.text, engine)
+
+    # Only a program that survived every check is worth replaying. Caching a
+    # refusal would make an ambiguity look permanent when the fix is one word.
+    ok = v.ok and not any(a["kind"] == "ambiguous" for a in audit)
+    if ok:
+        _store_program(key, {
+            "spec": copy.deepcopy(spec), "repaired": repaired,
+            "elapsed_s": elapsed, "model": os.environ.get("IFM_MODEL", ""),
+            "compiled_at": _time.strftime("%Y-%m-%dT%H:%M:%SZ",
+                                          _time.gmtime()),
+            "text": req.text,
+        })
+    return _compile_reply(spec, v, audit, repaired=repaired, source="live",
+                          elapsed_s=elapsed,
+                          model=os.environ.get("IFM_MODEL", ""))
+
+
+def _compile_reply(spec: dict, v, audit: list[dict], *, repaired: bool,
+                   source: str, elapsed_s=None, compiled_at=None,
+                   model=None) -> dict:
+    """One shape for both paths, and it always says which path it took."""
     ok = v.ok and not any(a["kind"] == "ambiguous" for a in audit)
     return {"spec": spec, "repaired": repaired, "audit": audit,
             "restated": spec.get("restated"),
             "unsupported": spec.get("unsupported") or [],
+            # Never silent about provenance: a replayed program says so, and
+            # says when it was compiled and how long it took the first time.
+            "source": source, "elapsed_s": elapsed_s,
+            "compiled_at": compiled_at, "model": model,
             "verdict": {"ok": ok,
                         "reasons": v.reasons + [a["message"] for a in audit],
                         "missing": v.missing, "questions": v.questions,

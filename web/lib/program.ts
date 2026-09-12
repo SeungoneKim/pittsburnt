@@ -63,6 +63,11 @@ export interface ProgramSpec {
 export interface CompileReply {
   spec: ProgramSpec;
   repaired: boolean;
+  /** "live" if the model was called just now, "cache" if replayed. */
+  source: "live" | "cache";
+  elapsed_s: number | null;
+  compiled_at: string | null;
+  model: string | null;
   restated: string | null;
   unsupported: string[];
   verdict: {

@@ -1,0 +1,157 @@
+{
+ "43c58d48": {
+  "spec": {
+   "objective": "min_heat_load",
+   "budget_usd": 250000,
+   "cells": [
+    {
+     "scenario": "heat2035",
+     "hour": 15,
+     "persona": "older_adults",
+     "weight": 1.0
+    }
+   ],
+   "constraints": [
+    {
+     "type": "focus",
+     "scope": {
+      "corridor": "Forbes Avenue"
+     },
+     "weight": 3
+    },
+    {
+     "type": "corridor_floor",
+     "min_units": 1
+    },
+    {
+     "type": "spend_cap",
+     "scope": {
+      "corridor": "Forbes Avenue"
+     },
+     "max_fraction": 0.5
+    }
+   ],
+   "restated": "Minimise heat load for older adults at 3 PM in the heat2035 scenario with a $250,000 budget, prioritising Forbes Avenue, guaranteeing at least one unit on every corridor, and capping Forbes Avenue spending at half the budget.",
+   "unsupported": []
+  },
+  "repaired": false,
+  "elapsed_s": 6.42,
+  "model": "IFM/K2-Horizon-375B-A23B",
+  "compiled_at": "2026-09-12T20:14:20Z",
+  "text": "Protect older adults on Forbes, don't let any corridor get nothing, cap Forbes at half the budget"
+ },
+ "04952241": {
+  "spec": {
+   "objective": "min_heat_load",
+   "budget_usd": 250000,
+   "cells": [
+    {
+     "scenario": "heat2035",
+     "hour": 15,
+     "persona": "older_adults",
+     "weight": 1.0
+    }
+   ],
+   "constraints": [
+    {
+     "type": "focus",
+     "scope": {
+      "corridor": "Forbes Avenue"
+     },
+     "weight": 3
+    },
+    {
+     "type": "corridor_floor",
+     "min_units": 1,
+     "scope": [
+      "Fifth Avenue",
+      "South Craig Street"
+     ]
+    },
+    {
+     "type": "spend_cap",
+     "scope": {
+      "corridor": "Forbes Avenue"
+     },
+     "max_fraction": 0.5
+    },
+    {
+     "type": "kind_floor",
+     "kind": "tree",
+     "min_units": 1
+    },
+    {
+     "type": "kind_floor",
+     "kind": "shaded_shelter",
+     "min_units": 1
+    }
+   ],
+   "restated": "The program minimizes heat load for older adults in the heat2035 scenario at 15:00 with a $250,000 budget, prioritizing Forbes Avenue, guaranteeing at least one intervention on Fifth Avenue and South Craig Street, capping Forbes spending at 50% of the budget, and requiring at least one tree and one shaded waiting shelter.",
+   "unsupported": [
+    "where they produce measurable impact"
+   ]
+  },
+  "repaired": false,
+  "elapsed_s": 11.29,
+  "model": "IFM/K2-Horizon-375B-A23B",
+  "compiled_at": "2026-09-12T20:14:31Z",
+  "text": "Use a $250,000 budget to protect older adults. Prioritize Forbes Avenue, guarantee at least one intervention on Fifth Avenue and South Craig Street, cap spending on Forbes at 50% of the total budget, and use both trees and shaded waiting shelters where they produce measurable impact."
+ },
+ "df053d9b": {
+  "spec": {
+   "objective": "min_heat_load",
+   "budget_usd": 250000,
+   "cells": [
+    {
+     "scenario": "heat2035",
+     "hour": 15,
+     "persona": "older_adults",
+     "weight": 1.0
+    }
+   ],
+   "constraints": [
+    {
+     "type": "corridor_floor",
+     "min_units": 1
+    }
+   ],
+   "restated": "Minimise heat load for older adults at 3 PM in 2035 with $250,000, requiring every corridor carrying walking demand to receive at least one unit.",
+   "unsupported": []
+  },
+  "repaired": false,
+  "elapsed_s": 3.86,
+  "model": "IFM/K2-Horizon-375B-A23B",
+  "compiled_at": "2026-09-12T20:14:35Z",
+  "text": "Spread the money so nowhere gets left out"
+ },
+ "873fb3d5": {
+  "spec": {
+   "objective": "min_heat_load",
+   "budget_usd": 250000,
+   "cells": [
+    {
+     "scenario": "heat2035",
+     "hour": 12,
+     "persona": "students",
+     "weight": 1.0
+    }
+   ],
+   "constraints": [
+    {
+     "type": "spend_floor",
+     "scope": {
+      "corridor": "Fifth Avenue"
+     },
+     "min_fraction": 0.3333333333333333
+    }
+   ],
+   "restated": "Minimise heat load for students at noon in the heat2035 scenario with a $250,000 budget, requiring at least one third of spending on Fifth Avenue.",
+   "unsupported": []
+  },
+  "repaired": false,
+  "elapsed_s": 8.05,
+  "model": "IFM/K2-Horizon-375B-A23B",
+  "compiled_at": "2026-09-12T20:14:43Z",
+  "text": "Prioritise students at noon and spend at least a third on Fifth Avenue"
+ }
+}

@@ -6,19 +6,33 @@ import { compile, describe, solve, vocabulary } from "@/lib/program";
 import type { CompileReply, ProgramResult, Vocabulary } from "@/lib/program";
 import type { ReadySelection } from "@/lib/types";
 
+/**
+ * The shipped examples.
+ *
+ * Oakland has both a North and a South Craig Street, so a sentence that says
+ * only "Craig Street" is genuinely ambiguous and the engine refuses to guess
+ * which was meant. That refusal is a feature, but it should be something a
+ * person chooses to show, not something the prefilled default walks into -
+ * so the worked examples name the street and the ambiguity has a chip of its
+ * own.
+ */
 const EXAMPLES = [
   "Protect older adults on Forbes, don't let any corridor get nothing, "
   + "cap Forbes at half the budget",
   "Use a $250,000 budget to protect older adults. Prioritize Forbes Avenue, "
+  + "guarantee at least one intervention on Fifth Avenue and South Craig "
+  + "Street, cap spending on Forbes at 50% of the total budget, and use both "
+  + "trees and shaded waiting shelters where they produce measurable impact.",
+  "Spread the money so nowhere gets left out",
+  "Prioritise students at noon and spend at least a third on Fifth Avenue",
+  "Use a $250,000 budget to protect older adults. Prioritize Forbes Avenue, "
   + "guarantee at least one intervention on Fifth Avenue and Craig Street, "
   + "cap spending on Forbes at 50% of the total budget, and use both trees "
   + "and shaded waiting shelters where they produce measurable impact.",
-  "Spread the money so nowhere gets left out",
-  "Prioritise students at noon and spend at least a third on Fifth Avenue",
 ];
 
 const CHIP_LABEL = ["", "Forbes + Fifth + Craig, both kinds",
-  "Spread it around", "Students at noon"];
+  "Spread it around", "Students at noon", "An ambiguous street"];
 
 /**
  * State a goal; a solver answers it.
@@ -38,7 +52,8 @@ export default function ProgramPanel({ sel, onPlan, onClose }: {
   const [vocab, setVocab] = useState<Vocabulary | null>(null);
   const [reply, setReply] = useState<CompileReply | null>(null);
   const [result, setResult] = useState<ProgramResult | null>(null);
-  const [stage, setStage] = useState<"idle" | "compiling" | "solving">("idle");
+  const [step, setStep] = useState(-1);
+  const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   const defaults = {
@@ -59,22 +74,46 @@ export default function ProgramPanel({ sel, onPlan, onClose }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /**
+   * Run the pipeline with its steps visible.
+   *
+   * The work is real and happens in this order; what the staging adds is that
+   * you can see it happen. Compiling is the slow step - 8-25 s against the
+   * model, or instant when a program has been compiled before - so the reveal
+   * waits for the real answer and then walks the remaining checks at a pace a
+   * person can follow, exactly as the crash-test choreography does.
+   *
+   * The labels never claim work that did not happen: a replayed program says
+   * "restored", a live one names the model and counts the seconds.
+   */
   const run = async () => {
-    setStage("compiling"); setError(null); setReply(null); setResult(null);
+    setError(null); setReply(null); setResult(null);
+    setStep(0); setElapsed(0);
+    const t0 = performance.now();
+    const tick = window.setInterval(
+      () => setElapsed((performance.now() - t0) / 1000), 100);
+    const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
     try {
       const c = await compile(text, defaults);
+      window.clearInterval(tick);
       setReply(c);
-      if (!c.verdict.ok) { setStage("idle"); return; }
-      setStage("solving");
+      // A replayed program arrives instantly; give the remaining checks room
+      // to be seen rather than flashing the whole result at once.
+      const beat = c.source === "cache" ? 700 : 450;
+      setStep(1); await pause(beat);
+      setStep(2); await pause(beat);
+      if (!c.verdict.ok) { setStep(-1); return; }
+      setStep(3); await pause(beat);
       const plan = await solve(c.spec);
+      setStep(4); await pause(400);
       setResult(plan);
       onPlan(plan);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
-    } finally { setStage("idle"); }
+    } finally { window.clearInterval(tick); setStep(-1); }
   };
 
-  const busy = stage !== "idle";
+  const busy = step >= 0;
 
   return (
     <div className="pointer-events-auto absolute inset-0 z-40 flex justify-end
@@ -122,8 +161,7 @@ export default function ProgramPanel({ sel, onPlan, onClose }: {
               className="mt-2 rounded-lg bg-indigo-700 px-4 py-2 text-[13px]
                 font-bold uppercase tracking-wide text-white
                 disabled:bg-slate-300">
-              {stage === "compiling" ? "Compiling…"
-                : stage === "solving" ? "Solving…" : "Build the program"}
+              {busy ? "Working…" : "Build the program"}
             </button>
             {vocab && (
               <p className="mt-1.5 text-[11px] text-slate-500">
@@ -136,6 +174,13 @@ export default function ProgramPanel({ sel, onPlan, onClose }: {
             )}
           </div>
 
+          {busy && (
+            <Pipeline step={step} elapsed={elapsed}
+              model={vocab?.provider.model ?? "the model"}
+              corridors={vocab?.corridors.length ?? 0}
+              source={reply?.source ?? null} />
+          )}
+
           {error && (
             <p className="rounded-lg bg-red-50 p-2 text-[12px] text-red-800">
               {error}
@@ -144,11 +189,25 @@ export default function ProgramPanel({ sel, onPlan, onClose }: {
 
           {reply && (
             <div className="rounded-xl border border-slate-200 p-3">
-              <h3 className="text-[12px] uppercase tracking-wider text-slate-500">
-                The program it built {reply.repaired && (
-                  <span className="ml-1 rounded bg-amber-100 px-1 text-[10px]
-                    font-semibold text-amber-900">repaired once</span>)}
-              </h3>
+              <div className="mb-1 flex items-baseline gap-2">
+                <h3 className="text-[12px] uppercase tracking-wider text-slate-500">
+                  The program it built
+                </h3>
+                <span className={`ml-auto rounded px-1.5 py-0.5 text-[10px]
+                  font-semibold ${reply.source === "cache"
+                    ? "bg-slate-200 text-slate-700"
+                    : "bg-indigo-100 text-indigo-800"}`}>
+                  {reply.source === "cache"
+                    ? `replayed · compiled in ${reply.elapsed_s ?? "?"}s`
+                    : `compiled live in ${reply.elapsed_s ?? "?"}s`}
+                </span>
+                {reply.repaired && (
+                  <span className="rounded bg-amber-100 px-1.5 py-0.5
+                    text-[10px] font-semibold text-amber-900">
+                    repaired once
+                  </span>
+                )}
+              </div>
               {reply.restated && (
                 <p className="mt-1 text-[13px] text-slate-800">{reply.restated}</p>
               )}
@@ -294,6 +353,52 @@ function disambiguate(text: string, chosen: string): string {
     }
   }
   return text;
+}
+
+/** The five real steps, shown while they happen. */
+function Pipeline({ step, elapsed, model, corridors, source }: {
+  step: number; elapsed: number; model: string; corridors: number;
+  source: "live" | "cache" | null;
+}) {
+  const steps = [
+    source === "cache"
+      ? "Restoring a program compiled earlier"
+      : `Sending the sentence to ${model}`,
+    "Checking every name against the model's own vocabulary",
+    `Auditing the program against your words (${corridors} corridors)`,
+    "Handing the program to HiGHS",
+    "Proving the plan optimal",
+  ];
+  return (
+    <div className="rounded-xl border border-indigo-200 bg-indigo-50/70 p-3">
+      <ol className="space-y-1.5">
+        {steps.map((label, i) => (
+          <li key={label} className="flex items-center gap-2 text-[12.5px]">
+            <span aria-hidden className="grid h-4 w-4 shrink-0 place-items-center">
+              {i < step ? (
+                <svg viewBox="0 0 16 16" className="h-3.5 w-3.5 fill-emerald-600">
+                  <path d="M6.2 11.4 3 8.2l1.1-1.1 2.1 2.1 5.6-5.6L13 4.7z" />
+                </svg>
+              ) : i === step ? (
+                <span className="h-3 w-3 animate-spin rounded-full border-2
+                  border-indigo-300 border-t-indigo-700" />
+              ) : (
+                <span className="h-1.5 w-1.5 rounded-full bg-slate-300" />
+              )}
+            </span>
+            <span className={i <= step ? "text-slate-800" : "text-slate-400"}>
+              {label}
+            </span>
+            {i === 0 && step === 0 && (
+              <span className="ml-auto tabular-nums text-[11.5px] text-slate-500">
+                {elapsed.toFixed(1)}s
+              </span>
+            )}
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
 }
 
 function Row({ k, v }: { k: string; v: string }) {

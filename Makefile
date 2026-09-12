@@ -25,6 +25,7 @@ help:
 	@echo "  make gates-ui          - the 2.7 UI checklist at 1366x768 and 1920x1080"
 	@echo "  make gates-live        - Beta panel against the real model (needs a key)"
 	@echo "  make gates-program     - the demo sentence, compiled and solved (needs a key)"
+	@echo "  make warm-programs     - compile the example sentences once, so a demo needs no network"
 	@echo ""
 	@echo "Rebuild the data (each step caches; run only what you need)"
 	@echo "  make step1  walk graph -> corridor-labelled segments"
@@ -97,3 +98,9 @@ gates-live:
 # HiGHS. Needs a key, so it is separate from `gates`.
 gates-program:
 	node tests/program_gate.mjs
+
+# Compile the shipped example sentences once and store them. Compiling is the
+# only slow, networked step in the app; after this the panel replays stored
+# programs and works with the wifi unplugged. Needs the API running and a key.
+warm-programs:
+	$(PY) tools/warm_programs.py

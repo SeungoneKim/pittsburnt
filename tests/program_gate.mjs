@@ -19,9 +19,12 @@ const SENTENCE = "Protect older adults on Forbes, don't let any corridor get "
 // an intervention type efficiency alone never buys.
 const SENTENCE2 = "Use a $250,000 budget to protect older adults. Prioritize "
   + "Forbes Avenue, guarantee at least one intervention on Fifth Avenue and "
-  + "Craig Street, cap spending on Forbes at 50% of the total budget, and use "
-  + "both trees and shaded waiting shelters where they produce measurable "
-  + "impact.";
+  + "South Craig Street, cap spending on Forbes at 50% of the total budget, "
+  + "and use both trees and shaded waiting shelters where they produce "
+  + "measurable impact.";
+// The same sentence with the street left ambiguous, which is the beat the
+// "An ambiguous street" chip exists to show on purpose.
+const AMBIGUOUS = SENTENCE2.replace("South Craig Street", "Craig Street");
 const gates = []; const g = (n, ok, d = '') => gates.push([!!ok, n, String(d)]);
 
 const b = await chromium.launch();
@@ -91,40 +94,25 @@ const body = await p.locator('body').innerText();
 g('the result card shows the solved plan', /after adjust/i.test(body));
 await p.screenshot({ path: `${OUT}/v27_2_program_map.png` });
 
-// --- the second demo sentence, exactly as a planner would write it ------
-// It says "Craig Street", which Oakland has two of. So this drives the whole
-// live sequence: refuse -> offer the real candidates -> one click -> solve.
+// --- the pipeline is visible while it works ------------------------------
 await p.locator('button', { hasText: /^State a goal$/ }).first().click();
 await p.waitForTimeout(900);
 await p.locator('textarea').fill(SENTENCE2);
 await p.locator('button', { hasText: /BUILD THE PROGRAM/i }).click();
-await p.waitForFunction(() => /will not guess/i.test(
-  document.querySelector('aside')?.innerText ?? ''), null, { timeout: 150000 });
-const t2 = await p.locator('aside').innerText();
-g('2: an ambiguous street stops the plan instead of being guessed',
-  /could mean/i.test(t2) && /will not guess/i.test(t2),
-  (t2.match(/You wrote[^\n]*/) || [''])[0].slice(0, 96));
-g('2: both real candidates are named',
-  /North Craig Street/.test(t2) && /South Craig Street/.test(t2));
-g('2: nothing was solved while the reference was unclear',
-  !/Solved —/.test(t2));
-await p.screenshot({ path: `${OUT}/v27_3_ambiguous.png` });
-
-g('2: one-click fixes are offered',
-  await p.locator('aside button', { hasText: 'South Craig Street' }).count() >= 1);
-await p.locator('aside button', { hasText: 'South Craig Street' }).first().click();
-await p.waitForTimeout(300);
-g('2: clicking a candidate rewrites the sentence in place',
-  (await p.locator('textarea').inputValue()).includes('South Craig Street')
-  && !/on Craig Street/.test(await p.locator('textarea').inputValue()));
-
-const t1 = Date.now();
-await p.locator('button', { hasText: /BUILD THE PROGRAM/i }).click();
+await p.waitForTimeout(350);
+const mid = await p.locator('aside').innerText();
+g('2: the pipeline steps are shown while it runs',
+  /Checking every name|Restoring a program|Sending the sentence/i.test(mid),
+  (mid.match(/(Restoring|Sending)[^\n]*/) || [''])[0].slice(0, 62));
 await p.waitForFunction(() => /Solved —/.test(
   document.querySelector('aside')?.innerText ?? ''), null, { timeout: 150000 });
 const t3 = await p.locator('aside').innerText();
-g(`2: solves once the street is named (${((Date.now() - t1) / 1000).toFixed(1)}s)`,
-  true);
+
+g('2: the clean default runs without a disambiguation stop',
+  !/will not guess/i.test(t3));
+g('2: it says whether the program was compiled live or replayed',
+  /compiled live in|replayed · compiled in/i.test(t3),
+  (t3.match(/(compiled live in|replayed · compiled in)[^\n]*/) || [''])[0]);
 g('2: scopes the floor to the named streets only',
   /Fifth Avenue/.test(t3) && !/Every walked corridor/.test(t3),
   (t3.match(/[^\n]*each receive at least[^\n]*/) || [''])[0].slice(0, 70));
@@ -137,6 +125,30 @@ g('2: the Forbes cap binds here', /no further unit fits inside it/.test(t3),
   (t3.match(/\$[\d,]+ of the \$[\d,]+ ceiling/) || [''])[0]);
 g('2: only the untestable phrase is unsupported', /measurable impact/.test(t3));
 await p.screenshot({ path: `${OUT}/v27_4_sentence2.png` });
+
+// --- a replay is fast, and says so ---------------------------------------
+const tReplay = Date.now();
+await p.locator('button', { hasText: /BUILD THE PROGRAM/i }).click();
+await p.waitForFunction(() => /Solved —/.test(
+  document.querySelector('aside')?.innerText ?? ''), null, { timeout: 60000 });
+const replaySecs = (Date.now() - tReplay) / 1000;
+const t4 = await p.locator('aside').innerText();
+g(`2: a second run replays the stored program (${replaySecs.toFixed(1)}s)`,
+  replaySecs < 25 && /replayed/i.test(t4),
+  (t4.match(/replayed[^\n]*/) || [''])[0]);
+
+// --- the ambiguity beat still exists, on purpose --------------------------
+await p.locator('textarea').fill(AMBIGUOUS);
+await p.locator('button', { hasText: /BUILD THE PROGRAM/i }).click();
+await p.waitForFunction(() => /will not guess/i.test(
+  document.querySelector('aside')?.innerText ?? ''), null, { timeout: 150000 });
+const t5 = await p.locator('aside').innerText();
+g('3: an ambiguous street still stops the plan',
+  /could mean/i.test(t5) && /North Craig Street/.test(t5)
+  && /South Craig Street/.test(t5));
+g('3: one-click fixes are offered',
+  await p.locator('aside button', { hasText: 'South Craig Street' }).count() >= 1);
+await p.screenshot({ path: `${OUT}/v27_3_ambiguous.png` });
 
 g('no page or console errors', errs.length === 0, errs.slice(0, 2).join(' | '));
 
