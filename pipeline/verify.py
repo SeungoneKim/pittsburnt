@@ -284,6 +284,37 @@ def verify_scenarios() -> None:
           " < ".join(f"{v['delta_c']:+.2f}" for v in scen.values()))
 
 
+def verify_waiting() -> None:
+    path = CACHE / "wait_minutes.npz"
+    if not path.exists():
+        check("wait_minutes.npz exists", False, "missing - run step07b")
+        return
+    z = np.load(path, allow_pickle=True)
+    wait = z["wait_minutes"]
+    meta = json.loads((CACHE / "wait_meta.json").read_text())
+    walk = np.load(CACHE / "minutes.npz", allow_pickle=True)["minutes"]
+
+    check("wait_minutes.npz exists", True, f"{wait.shape}")
+    check("waiting aligns with walking", wait.shape == walk.shape)
+    check("waiting minutes non-negative and finite",
+          bool((wait >= 0).all() and np.isfinite(wait).all()))
+    check("waiting is a minority of exposure",
+          0 < wait.sum() < walk.sum(),
+          f"{wait.sum()/(wait.sum()+walk.sum())*100:.1f}% of person-minutes")
+    # The one assumption in this layer must be declared, not buried.
+    check("transit share is declared as an assumption",
+          meta.get("status") == "assumption" and "transit_trip_share_range" in meta,
+          f"{meta['transit_trip_share']:.0%} "
+          f"(range {meta['transit_trip_share_range'][0]:.0%}"
+          f"-{meta['transit_trip_share_range'][1]:.0%})")
+    check("wait duration derived from real service data",
+          "headway" in meta.get("wait_rule", "").lower(),
+          f"{meta['stops_with_service_data']}/{meta['stops']} stops with PRT data")
+    check("shelter capacity matches unsheltered stops",
+          int(z["shelter_capacity"].sum()) == meta["unsheltered_stops"],
+          f"{meta['unsheltered_stops']} sites")
+
+
 def main() -> int:
     verify_segments()
     verify_edge_map()
@@ -292,6 +323,7 @@ def main() -> int:
     verify_trees()
     verify_trips()
     verify_scenarios()
+    verify_waiting()
 
     width = max(len(n) for _, n, _ in results)
     n_fail = 0

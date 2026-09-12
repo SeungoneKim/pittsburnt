@@ -5,7 +5,7 @@ export PYTHONPATH := pipeline:api
 # no-op because a directory named api/ exists and make considers the target
 # already satisfied.
 .PHONY: help api web run \
-        step1 step2 step3 step4 step5 step6 step8 pipeline \
+        step1 step2 step3 step4 step5 step6 step7 step7b step8 pipeline \
         verify test-engine check-determinism inspect check clean-cache
 
 help:
@@ -26,7 +26,9 @@ help:
 	@echo "  make step3  shadows at 8/12/15/18"
 	@echo "  make step4  tree canopy -> sun exposure"
 	@echo "  make step5  deterministic synthetic trips"
-	@echo "  make step6  observed hot day + CMIP6 -> heat scenarios"
+	@echo "  make step6  observed hot day + CMIP6-LOCA2 -> heat scenarios"
+	@echo "  make step7  transit stops -> shelter sites"
+	@echo "  make step7b waiting exposure at stops"
 	@echo "  make step8  static fallback bundle for the web app"
 	@echo "  make pipeline          - all of the above, in order"
 
@@ -44,8 +46,10 @@ step3:  ; $(PY) pipeline/step03_shadows.py
 step4:  ; $(PY) pipeline/step04_trees.py
 step5:  ; $(PY) pipeline/step05_trips.py
 step6:  ; $(PY) pipeline/step06_scenarios.py
+step7:  ; $(PY) pipeline/step07_transit.py
+step7b: ; $(PY) pipeline/step07b_waiting.py
 step8:  ; $(PY) pipeline/step08_export_web.py
-pipeline: step1 step2 step3 step4 step5 step6 step8
+pipeline: step1 step2 step3 step4 step5 step6 step7 step7b step8
 
 # --- checks ---------------------------------------------------------------
 check: verify test-engine

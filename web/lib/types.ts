@@ -53,6 +53,7 @@ export interface Meta {
   severe_threshold_utci_c: number;
   heat_load_base_utci_c: number;
   hero_corridors: string[];
+  waiting_exposure: WaitingMeta | null;
   variants: string[];
   canopy: CanopyMeta | null;
   scope: Scope;
@@ -72,8 +73,22 @@ export interface Conditions {
 }
 
 /** One crash test, in engine segment order. */
+export interface WaitingMeta {
+  transit_trip_share: number;
+  transit_trip_share_range: [number, number];
+  status: string;
+  basis: string;
+  wait_rule: string;
+  wait_source: string;
+  stops: number;
+  median_wait_minutes: number;
+  unsheltered_stops: number;
+}
+
 export interface CrashResult {
-  severe_total: number;          // person-minutes at or above UTCI 38 C
+  severe_total: number;          // walking + waiting, at or above UTCI 38 C
+  walking_severe_total: number;
+  waiting_severe_total: number;
   heat_load_total: number;
   weighted_severe_total: number;
   planning_weight: number;
@@ -109,6 +124,10 @@ export interface AdaptResult {
   metric_used: string;
   before_severe: number;
   after_severe: number;
+  before_walking_severe: number;
+  after_walking_severe: number;
+  before_waiting_severe: number;
+  after_waiting_severe: number;
   before_heat_load: number;
   after_heat_load: number;
   reduction_pct: number;

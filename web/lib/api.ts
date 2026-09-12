@@ -70,6 +70,10 @@ interface RawAdapt {
   metric_used: string;
   before_severe: number;
   after_severe: number;
+  before_walking_severe: number;
+  after_walking_severe: number;
+  before_waiting_severe: number;
+  after_waiting_severe: number;
   before_heat_load: number;
   after_heat_load: number;
   reduction_pct: number;
@@ -102,6 +106,7 @@ async function adaptBundle() {
 export async function crashTest(sel: Selection): Promise<CrashResult> {
   const live = await tryApi<{
     severe_person_minutes: number; heat_load: number;
+    walking_severe_person_minutes: number; waiting_severe_person_minutes: number;
     weighted_severe_person_minutes: number; planning_weight: number;
     conditions: CrashResult["conditions"] & {
       utci_sun_c: number; utci_shade_c: number;
@@ -121,6 +126,8 @@ export async function crashTest(sel: Selection): Promise<CrashResult> {
     const { utci_sun_c, utci_shade_c, ...cond } = live.conditions;
     return {
       severe_total: live.severe_person_minutes,
+      walking_severe_total: live.walking_severe_person_minutes,
+      waiting_severe_total: live.waiting_severe_person_minutes,
       heat_load_total: live.heat_load,
       weighted_severe_total: live.weighted_severe_person_minutes,
       planning_weight: live.planning_weight,
@@ -143,6 +150,8 @@ export async function adapt(sel: Selection, before: CrashResult): Promise<AdaptR
   const live = await tryApi<{
     spent_usd: number; counts: Record<string, number>; metric_used: string;
     before_severe: number; after_severe: number;
+    before_walking_severe: number; after_walking_severe: number;
+    before_waiting_severe: number; after_waiting_severe: number;
     before_heat_load: number; after_heat_load: number;
     reduction_pct: number; impact_scopes: ImpactScope[];
     segments: { severe_minutes: number; heat_load: number }[];
@@ -171,6 +180,10 @@ export async function adapt(sel: Selection, before: CrashResult): Promise<AdaptR
       spent_usd: live.spent_usd, counts: live.counts,
       metric_used: live.metric_used,
       before_severe: live.before_severe, after_severe: live.after_severe,
+      before_walking_severe: live.before_walking_severe,
+      after_walking_severe: live.after_walking_severe,
+      before_waiting_severe: live.before_waiting_severe,
+      after_waiting_severe: live.after_waiting_severe,
       before_heat_load: live.before_heat_load,
       after_heat_load: live.after_heat_load,
       reduction_pct: live.reduction_pct,
@@ -193,6 +206,10 @@ export async function adapt(sel: Selection, before: CrashResult): Promise<AdaptR
   return {
     spent_usd: r.spent_usd, counts: r.counts, metric_used: r.metric_used,
     before_severe: r.before_severe, after_severe: r.after_severe,
+    before_walking_severe: r.before_walking_severe,
+    after_walking_severe: r.after_walking_severe,
+    before_waiting_severe: r.before_waiting_severe,
+    after_waiting_severe: r.after_waiting_severe,
     before_heat_load: r.before_heat_load, after_heat_load: r.after_heat_load,
     reduction_pct: r.reduction_pct, impact_scopes: r.impact_scopes,
     metric_values,

@@ -1,0 +1,17 @@
+{
+  "transit_trip_share": 0.2,
+  "transit_trip_share_range": [
+    0.1,
+    0.3
+  ],
+  "status": "assumption",
+  "basis": "Share of simulated walking trips assumed to end at a transit stop. PRT publishes ridership by route, not by stop, so no stop-level boarding count exists to calibrate this against.",
+  "wait_rule": "Mean wait is half the headway, derived from PRT weekly service frequency at each stop",
+  "wait_source": "Pittsburgh Regional Transit stop service frequency (WPRDC)",
+  "stops": 114,
+  "stops_with_service_data": 104,
+  "median_wait_minutes": 4.55,
+  "segments_with_stops": 102,
+  "already_sheltered_stops": 24,
+  "unsheltered_stops": 90
+}

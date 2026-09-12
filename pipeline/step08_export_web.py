@@ -176,6 +176,8 @@ def main() -> None:
                 r = e.crash_test(sc, hour, persona)
                 crash[f"{sc}|{hour}|{persona}"] = {
                     "severe_total": round(r.severe_total, 2),
+                    "walking_severe_total": round(r.walking_severe_total, 2),
+                    "waiting_severe_total": round(r.waiting_severe_total, 2),
                     "heat_load_total": round(r.heat_load_total, 2),
                     "weighted_severe_total": round(r.weighted_severe_total, 2),
                     "planning_weight": r.planning_weight,
@@ -210,6 +212,10 @@ def main() -> None:
                         "metric_used": out["metric_used"],
                         "before_severe": round(out["before"].severe_total, 2),
                         "after_severe": round(out["after"].severe_total, 2),
+                        "before_walking_severe": round(out["before"].walking_severe_total, 2),
+                        "after_walking_severe": round(out["after"].walking_severe_total, 2),
+                        "before_waiting_severe": round(out["before"].waiting_severe_total, 2),
+                        "after_waiting_severe": round(out["after"].waiting_severe_total, 2),
                         "before_heat_load": round(out["before"].heat_load_total, 2),
                         "after_heat_load": round(out["after"].heat_load_total, 2),
                         "reduction_pct": round(out["reduction_pct"], 2),
@@ -249,6 +255,8 @@ def main() -> None:
         "severe_threshold_utci_c": SEVERE_UTCI_C,
         "heat_load_base_utci_c": HEAT_LOAD_BASE_C,
         "hero_corridors": CORRIDORS,
+        "waiting_exposure": json.loads((CACHE / "wait_meta.json").read_text())
+                            if (CACHE / "wait_meta.json").exists() else None,
         "personas": [{"key": p["persona"], "label": p["label"],
                       "speed_mps": p["speed_mps"],
                       "planning_weight": p["planning_weight"],

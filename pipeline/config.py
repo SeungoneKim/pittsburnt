@@ -126,6 +126,30 @@ RESIDENTIAL_BUILDINGS = ["house", "residential", "apartments", "detached",
                          "semidetached_house", "terrace", "dormitory",
                          "bungalow"]
 
+# --- Waiting exposure ------------------------------------------------------
+# A pedestrian standing at a bus stop accumulates heat too, and a shaded
+# shelter protects exactly that time. Wait duration is derived from real PRT
+# service frequency (half the headway, the standard estimate for random
+# arrivals). What is NOT available is how many people board each stop: PRT
+# publishes ridership by route, not by stop.
+#
+# So the share of simulated trips that end in a transit wait is a declared
+# planning assumption with a sensitivity range, exactly as the revision spec
+# permits - not a silently invented wait time. It is surfaced in the UI as an
+# ASSUMPTION and the range is reported alongside the central value.
+TRANSIT_TRIP_SHARE = 0.20          # central planning estimate
+TRANSIT_TRIP_SHARE_RANGE = (0.10, 0.30)
+TRANSIT_SHARE_STATUS = "assumption"
+TRANSIT_SHARE_BASIS = (
+    "Share of simulated walking trips assumed to end at a transit stop. "
+    "PRT publishes ridership by route, not by stop, so no stop-level boarding "
+    "count exists to calibrate this against."
+)
+# Service hours used to convert weekly bus trips into an hourly headway.
+TRANSIT_SERVICE_HOURS_PER_WEEK = 7 * 18
+MAX_WAIT_MINUTES = 30.0            # nobody is modelled as waiting longer
+MIN_WAIT_MINUTES = 2.0
+
 # --- Determinism -----------------------------------------------------------
 # Every trip population is regenerated from this seed, so the before/after
 # comparison runs the identical people over the identical geometry.

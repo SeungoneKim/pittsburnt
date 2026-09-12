@@ -125,6 +125,7 @@ def meta() -> dict:
             "thermal_index": "UTCI via thermofeel (ECMWF)",
         },
         "trip_seed": engine.trip_meta["seed"],
+        "waiting_exposure": engine.wait_meta,
     }
 
 
@@ -164,6 +165,8 @@ def crash_test(req: CrashTestRequest) -> dict:
                        "utci_sun_c": res.utci_sun_c,
                        "utci_shade_c": res.utci_shade_c},
         "severe_person_minutes": round(res.severe_total, 2),
+        "walking_severe_person_minutes": round(res.walking_severe_total, 2),
+        "waiting_severe_person_minutes": round(res.waiting_severe_total, 2),
         "heat_load": round(res.heat_load_total, 2),
         "weighted_severe_person_minutes": round(res.weighted_severe_total, 2),
         "planning_weight": res.planning_weight,
@@ -193,6 +196,10 @@ def adapt(req: AdaptRequest) -> dict:
         "metric_used": out["metric_used"],
         "before_severe": round(before.severe_total, 2),
         "after_severe": round(after.severe_total, 2),
+        "before_walking_severe": round(before.walking_severe_total, 2),
+        "after_walking_severe": round(after.walking_severe_total, 2),
+        "before_waiting_severe": round(before.waiting_severe_total, 2),
+        "after_waiting_severe": round(after.waiting_severe_total, 2),
         "before_heat_load": round(before.heat_load_total, 2),
         "after_heat_load": round(after.heat_load_total, 2),
         "reduction_pct": round(out["reduction_pct"], 2),

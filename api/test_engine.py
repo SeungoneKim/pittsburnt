@@ -85,9 +85,10 @@ def main() -> int:
     # exceed them, which a fifth independent sample would also do by luck.
     cohorts = [p for p in e.personas if p != "all"]
     parts = sum(e.crash_test("heat2035", 15, c).severe_total for c in cohorts)
+    # float32 accumulation across cohorts, so compare relatively.
     check("'all' equals the sum of the cohorts",
-          abs(allp.severe_total - parts) < 1e-6,
-          f"{allp.severe_total:.1f} vs {parts:.1f} summed over {len(cohorts)}")
+          abs(allp.severe_total - parts) <= 1e-6 * max(parts, 1.0),
+          f"{allp.severe_total:.4f} vs {parts:.4f} summed over {len(cohorts)}")
 
     # --- shade ------------------------------------------------------------
     full = np.ones(len(e.seg_ids))
@@ -99,6 +100,30 @@ def main() -> int:
     # Shade is a big lever, not a magic one: heat load persists in shade.
     check("shade does not zero out heat load", shaded.heat_load_total > 0,
           f"{shaded.heat_load_total:.0f} heat-load units remain in full shade")
+
+    # --- waiting exposure -------------------------------------------------
+    check("severe splits into walking and waiting",
+          abs(base.severe_total
+              - (base.walking_severe_total + base.waiting_severe_total)) < 1e-6,
+          f"walking {base.walking_severe_total:.0f} + waiting "
+          f"{base.waiting_severe_total:.0f} = {base.severe_total:.0f}")
+    check("waiting exposure exists at transit stops",
+          base.waiting_severe_total > 0,
+          f"{base.waiting_severe_total:.0f} person-min "
+          f"({base.waiting_severe_total/base.severe_total*100:.1f}% of total)")
+    # A shelter must protect waiting time and leave the footway alone,
+    # otherwise it is just a differently priced tree.
+    shelter_cov = np.ones(len(e.seg_ids))
+    sheltered = e.crash_test(*HERO, shelter_delta=shelter_cov)
+    check("shelter coverage removes waiting exposure",
+          sheltered.waiting_severe_total < base.waiting_severe_total,
+          f"{base.waiting_severe_total:.0f} -> {sheltered.waiting_severe_total:.0f}")
+    check("shelter coverage does not change walking exposure",
+          abs(sheltered.walking_severe_total - base.walking_severe_total) < 1e-9,
+          f"{base.walking_severe_total:.0f} unchanged")
+    check("shelters bounded by the real stop inventory",
+          int(a.max_units("shaded_shelter").sum()) == int(e.shelter_capacity.sum()),
+          f"{int(e.shelter_capacity.sum())} unsheltered stops")
 
     # --- interventions ----------------------------------------------------
     check("exactly two interventions exist",
@@ -138,6 +163,13 @@ def main() -> int:
     check("restricting the kind restricts the spend",
           set(k for k, v in shelter_only["counts"].items() if v) <= {"shaded_shelter"},
           " / ".join(f"{k}:{v}" for k, v in shelter_only["counts"].items()))
+    check("a shelter-only budget reduces waiting, not walking",
+          shelter_only["after"].waiting_severe_total
+          < shelter_only["before"].waiting_severe_total
+          and abs(shelter_only["after"].walking_severe_total
+                  - shelter_only["before"].walking_severe_total) < 1e-9,
+          f"waiting {shelter_only['before'].waiting_severe_total:.0f} -> "
+          f"{shelter_only['after'].waiting_severe_total:.0f}")
 
     # --- determinism ------------------------------------------------------
     r1 = e.crash_test(*HERO).severe_total

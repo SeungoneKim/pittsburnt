@@ -107,11 +107,33 @@ export default function AssumptionsPanel({ meta }: { meta: Meta }) {
             </span>
           </Section>
 
+          {meta.waiting_exposure && (
+            <Section title="Waiting at transit stops">
+              Exposure counts time spent <b>waiting</b> as well as walking. A
+              person at a stop is standing still and cannot leave, which is
+              what a shaded shelter protects.
+              <br />
+              <br />
+              Wait duration is <b>derived</b>: half the headway, from real PRT
+              service frequency at each of the{" "}
+              {meta.waiting_exposure.stops} stops (median{" "}
+              {meta.waiting_exposure.median_wait_minutes} minutes).
+              <br />
+              <span className="text-amber-700">
+                ASSUMPTION — {(meta.waiting_exposure.transit_trip_share * 100).toFixed(0)}%
+                of simulated trips are assumed to end in a transit wait
+                (range{" "}
+                {(meta.waiting_exposure.transit_trip_share_range[0] * 100).toFixed(0)}–
+                {(meta.waiting_exposure.transit_trip_share_range[1] * 100).toFixed(0)}%).
+                {" "}{meta.waiting_exposure.basis}
+              </span>
+            </Section>
+          )}
+
           <Section title="What this model does not count">
-            Exposure is scored for people <b>walking</b>. Time spent standing
-            still — waiting at a stop, queuing, sitting outside — is not in the
-            model, so interventions that mainly protect stationary people are
-            not represented here.
+            Walking and waiting at transit stops are counted. Other stationary
+            time — queuing, sitting outside a café, working outdoors — is not,
+            so this understates total exposure rather than overstating it.
           </Section>
         </div>
       )}

@@ -117,6 +117,10 @@ export default function ResultPanel({ meta, sel, result, adapted, hotspots }: Pr
               at or above {meta.severe_threshold_utci_c} °C ·{" "}
               heat load {fmt(result.heat_load_total)}
             </p>
+            <p className="text-[11px] text-slate-600">
+              {fmt(result.walking_severe_total)} walking ·{" "}
+              {fmt(result.waiting_severe_total)} waiting at stops
+            </p>
             {!useSevere && (
               <p className="mt-1 text-[11px] text-sky-800">
                 Nobody crosses the severe threshold in this scenario. Ranking
@@ -152,6 +156,14 @@ export default function ResultPanel({ meta, sel, result, adapted, hotspots }: Pr
                 </div>
               </div>
             </div>
+            {useSevere && (
+              <p className="mt-0.5 text-[11px] text-slate-600">
+                walking {fmt(adapted.before_walking_severe)} →{" "}
+                {fmt(adapted.after_walking_severe)} · waiting{" "}
+                {fmt(adapted.before_waiting_severe)} →{" "}
+                {fmt(adapted.after_waiting_severe)}
+              </p>
+            )}
             <p className="mt-0.5 text-[11px] text-slate-500">
               {useSevere ? "severe person-minutes" : "heat load"} ·{" "}
               ${fmt(adapted.spent_usd)} ·{" "}
