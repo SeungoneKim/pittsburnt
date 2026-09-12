@@ -28,10 +28,17 @@ import geopandas as gpd
 import networkx as nx
 import numpy as np
 import osmnx as ox
+from shapely.geometry import LineString, Point
+from shapely.strtree import STRtree
 
 from config import (CACHE, CRS_METRIC, CRS_WGS84, DERIVED_PERSONA,
                     DERIVED_PERSONA_LABEL, HOURS, HOUR_LABELS, N_TRIPS,
                     PERSONAS, RESIDENTIAL_BUILDINGS, SEED)
+
+# How many routes to export per (persona, hour) for the moving-agent layer.
+# The spec asks for 40-60 visible agents drawn from the active cohort, so
+# every combination the UI can select needs at least that many.
+DISPLAY_ROUTES_PER_COMBO = 55
 
 MINUTES_PATH = CACHE / "minutes.npz"
 TRIPS_PATH = CACHE / "trips.geojson"
@@ -102,6 +109,28 @@ def route_to_segments(Gp, route, edge_map):
     return per_seg, total
 
 
+def _longest_line(geom):
+    """Routes come back as a MultiLineString; take the main path."""
+    if isinstance(geom, LineString):
+        return geom
+    parts = [g for g in getattr(geom, "geoms", []) if isinstance(g, LineString)]
+    return max(parts, key=lambda g: g.length) if parts else None
+
+
+def _sun_along(line: LineString, tree, seg_ids, sun_row) -> list[float]:
+    """Sun exposure at each vertex of a route, from the segment it is on.
+
+    The moving-agent layer colours each walker by the thermal conditions
+    where they actually are, so those values have to be real ones from the
+    model rather than a decorative gradient.
+    """
+    out = []
+    for x, y in line.coords:
+        i = tree.nearest(Point(x, y))
+        out.append(round(float(sun_row[i]), 3))
+    return out
+
+
 def main() -> None:
     print("STEP 5  synthetic trip populations")
     rng = np.random.default_rng(SEED)
@@ -111,6 +140,13 @@ def main() -> None:
     edge_map = json.loads((CACHE / "edge_segments.json").read_text())
     seg = gpd.read_file(CACHE / "segments.geojson")
     seg_pos = {sid: i for i, sid in enumerate(seg["seg_id"])}
+
+    seg_m = gpd.read_file(CACHE / "segments.geojson").to_crs(CRS_METRIC)
+    seg_tree = STRtree(list(seg_m.geometry.values))
+    seg_ids_list = seg_m["seg_id"].tolist()
+    sun_npz = np.load(CACHE / "sun_exposure.npz", allow_pickle=True)
+    sun_by_hour = {int(h): sun_npz["sun_exposure"][:, i]
+                   for i, h in enumerate(sun_npz["hours"])}
 
     bld = gpd.read_file(CACHE / "buildings.geojson").to_crs(CRS_METRIC)
     cent = bld.copy()
@@ -137,6 +173,7 @@ def main() -> None:
         depart = rng.choice(mix_hours, size=len(pairs), p=mix_p)
 
         ok, lens = 0, []
+        kept = {h: 0 for h in HOURS}
         for ti, ((o, d), hr) in enumerate(zip(pairs, depart)):
             if o == d:
                 continue
@@ -156,13 +193,19 @@ def main() -> None:
                 j = seg_pos.get(sid)
                 if j is not None:
                     minutes[j, pi, hi] += m / persona["speed_mps"] / 60.0
-            if ok <= 60:  # keep a displayable subset for the frontend
-                routes_out.append({
-                    "persona": pname, "hour": int(hr),
-                    "length_m": round(total_m, 1),
-                    "minutes": round(total_m / persona["speed_mps"] / 60.0, 2),
-                    "geometry": ox.routing.route_to_gdf(Gp, route).geometry.union_all(),
-                })
+            if kept[int(hr)] < DISPLAY_ROUTES_PER_COMBO:
+                kept[int(hr)] += 1
+                geom = ox.routing.route_to_gdf(Gp, route).geometry.union_all()
+                line = _longest_line(geom)
+                if line is not None:
+                    routes_out.append({
+                        "persona": pname, "hour": int(hr),
+                        "length_m": round(total_m, 1),
+                        "minutes": round(total_m / persona["speed_mps"] / 60.0, 2),
+                        "sun": _sun_along(line, seg_tree, seg_ids_list,
+                                          sun_by_hour[int(hr)]),
+                        "geometry": line,
+                    })
 
         lens = np.array(lens) if lens else np.array([0.0])
         tot_min = minutes[:, pi, :].sum()
@@ -205,8 +248,11 @@ def main() -> None:
         {"seed": SEED, "n_trips_requested": N_TRIPS,
          "derived_persona": DERIVED_PERSONA, "personas": meta}, indent=2))
     if routes_out:
-        gpd.GeoDataFrame(routes_out, crs=CRS_METRIC).to_crs(CRS_WGS84) \
-            .to_file(TRIPS_PATH, driver="GeoJSON")
+        rg = gpd.GeoDataFrame(routes_out, crs=CRS_METRIC).to_crs(CRS_WGS84)
+        rg["sun"] = rg["sun"].map(json.dumps)   # GeoJSON has no list fields
+        rg.to_file(TRIPS_PATH, driver="GeoJSON")
+        print(f"  display routes: {len(rg)} "
+              f"(up to {DISPLAY_ROUTES_PER_COMBO} per persona-hour)")
 
     touched = (minutes.sum(axis=(1, 2)) > 0).mean()
     print(f"  segments carrying any traffic: {touched*100:.1f}%")

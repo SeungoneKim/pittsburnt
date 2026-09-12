@@ -16,6 +16,7 @@ import sys
 
 import geopandas as gpd
 import numpy as np
+import pandas as pd
 
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent / "api"))
 
@@ -76,6 +77,23 @@ def impact_scopes(e, props, before, after) -> list[dict]:
             scope(np.ones(len(e.seg_ids), dtype=bool), "Whole modelled network")]
 
 
+def _height_sources() -> dict:
+    """Provenance labels keyed by source, shipped once instead of per record."""
+    import geopandas as _gpd
+    b = _gpd.read_file(CACHE / "buildings.geojson")
+    cols = ["height_source_label", "height_source_url", "conversion_rule",
+            "confidence", "height_notes", "assumed_floor_height_m"]
+    out = {}
+    for src, grp in b.groupby("height_source"):
+        row = grp.iloc[0]
+        rec = {c: (None if pd.isna(row[c]) else row[c]) for c in cols}
+        rec["count"] = int(len(grp))
+        rec["area_share_pct"] = round(
+            float(grp.area_m2.sum()) / float(b.area_m2.sum()) * 100, 1)
+        out[str(src)] = rec
+    return out
+
+
 def main() -> None:
     print("STEP 8  static fallback bundle for the web app")
     OUT.mkdir(parents=True, exist_ok=True)
@@ -97,15 +115,32 @@ def main() -> None:
     assert [f["properties"]["seg_id"] for f in seg_gj["features"]] == e.seg_ids
     (OUT / "segments.geojson").write_text(json.dumps(seg_gj, separators=(",", ":")))
 
-    for name, src, simp in [("trips", "trips.geojson", 0.00002),
+    for name, src, simp in [("trips", "trips.geojson", 0.0),
                             ("trees", "trees.geojson", 0.0),
                             ("buildings", "buildings.geojson", 0.00003)]:
         path = CACHE / src
         if not path.exists():
             continue
         g = gpd.read_file(path)
+        if name == "buildings":
+            # Provenance labels are identical for every record of a given
+            # source, so ship them once in meta and keep only the keys here.
+            g = g[["bldg_id", "bldg_name", "building", "area_m2", "height_m",
+                   "height_source", "confidence", "height_is_measured",
+                   "geometry"]]
+        # Trip routes are deliberately NOT simplified: each carries one sun
+        # value per vertex, and dropping vertices would silently misalign the
+        # agent colours from the geometry they are meant to describe.
         if simp:
             g["geometry"] = g.geometry.simplify(simp)
+        if "sun" in g.columns:
+            g["sun"] = g["sun"].map(
+                lambda v: v if isinstance(v, str) else json.dumps(list(v)))
+        # GeoJSON round-trips dates back as Timestamps, which json cannot
+        # encode; keep them as the ISO strings they were written as.
+        for col in g.columns:
+            if pd.api.types.is_datetime64_any_dtype(g[col]):
+                g[col] = g[col].dt.date.astype(str)
         (OUT / f"{name}.geojson").write_text(
             json.dumps(round_geojson(json.loads(g.to_json())), separators=(",", ":")))
 
@@ -257,6 +292,8 @@ def main() -> None:
         "hero_corridors": CORRIDORS,
         "waiting_exposure": json.loads((CACHE / "wait_meta.json").read_text())
                             if (CACHE / "wait_meta.json").exists() else None,
+        # One entry per height source, so each building only carries its key.
+        "height_sources": _height_sources(),
         "personas": [{"key": p["persona"], "label": p["label"],
                       "speed_mps": p["speed_mps"],
                       "planning_weight": p["planning_weight"],

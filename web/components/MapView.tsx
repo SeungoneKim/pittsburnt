@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+
+import { AGENT_COUNT, buildRoutes, sampleRoute } from "@/lib/agents";
+import type { AgentRoute } from "@/lib/agents";
 import "mapbox-gl/dist/mapbox-gl.css";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { AdaptResult, CrashResult, Hour, Meta } from "@/lib/types";
@@ -74,13 +77,14 @@ interface Props {
   hour: Hour;
   layers: {
     shadow: boolean; canopy: boolean; trees: boolean;
-    buildings: boolean; trips: boolean;
+    buildings: boolean; trips: boolean; agents: boolean;
   };
+  persona: string;
   onSegmentClick?: (segId: string, index: number) => void;
 }
 
 export default function MapView({
-  meta, result, adapted, hour, layers, onSegmentClick,
+  meta, result, adapted, hour, layers, persona, onSegmentClick,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const map = useRef<GLMap | null>(null);
@@ -89,6 +93,9 @@ export default function MapView({
   // renderer means touching a private field that Mapbox and MapLibre spell
   // differently, which is exactly the kind of thing that breaks on stage.
   const segGeo = useRef<GeoJSON.FeatureCollection | null>(null);
+  const tripGeo = useRef<GeoJSON.FeatureCollection | null>(null);
+  const agents = useRef<AgentRoute[]>([]);
+  const raf = useRef<number | null>(null);
 
   // --- create the map once -------------------------------------------------
   useEffect(() => {
@@ -170,6 +177,7 @@ export default function MapView({
           },
         });
 
+        tripGeo.current = trips;
         m.addSource("trips", { type: "geojson", data: trips });
         m.addLayer({
           id: "trips", type: "line", source: "trips",
@@ -239,17 +247,49 @@ export default function MapView({
         });
         // Segments in the Very Strong band, drawn over the tint so the
         // threshold reads as a class rather than as one more shade of orange.
-        // feature-state is not permitted in a layer filter, only in paint,
-        // so visibility is driven through opacity rather than a filter.
+        // Moving agents. A halo grows while an agent is above the severe
+        // threshold, so its size means accumulated exposure rather than
+        // elapsed time.
+        m.addSource("agents", {
+          type: "geojson",
+          data: { type: "FeatureCollection", features: [] },
+        });
         m.addLayer({
-          id: "severe", type: "line", source: "segments",
+          id: "agent-halo", type: "circle", source: "agents",
+          layout: { visibility: "none" },
           paint: {
-            "line-color": "#d7301f",
-            "line-width": ["interpolate", ["linear"], ["zoom"], 13, 3.2, 17, 8],
+            "circle-radius": ["interpolate", ["linear"], ["get", "severe"],
+              0, 0, 20, 16],
+            "circle-color": "#d7301f", "circle-opacity": 0.16,
+            "circle-blur": 0.5,
+          },
+        });
+        m.addLayer({
+          id: "agent-dot", type: "circle", source: "agents",
+          layout: { visibility: "none" },
+          paint: {
+            "circle-radius": ["interpolate", ["linear"], ["zoom"], 13, 2.6, 17, 5.5],
+            "circle-color": ["interpolate", ["linear"], ["get", "utci"],
+              ...UTCI_RAMP.flatMap(([stop, colour]) => [stop, colour])],
+            "circle-stroke-color": "#ffffff", "circle-stroke-width": 1,
+          },
+        });
+
+        // Human-exposure hotspots. The thermal tint already says which
+        // streets are in the Very Strong band - about half of them - so
+        // emphasis is reserved for where people actually absorb the most.
+        // A percentile may rank hotspots; it may not restate a stress class.
+        // feature-state is not permitted in a layer filter, only in paint,
+        // so visibility runs through opacity.
+        m.addLayer({
+          id: "hotspot-halo", type: "line", source: "segments",
+          paint: {
+            "line-color": "#7f0000",
+            "line-width": ["interpolate", ["linear"], ["zoom"], 13, 7, 17, 16],
             "line-opacity": [
-              "case",
-              [">=", ["coalesce", ["feature-state", "utci"], 0], 38], 0.95, 0,
+              "case", ["==", ["feature-state", "hotspot"], true], 0.2, 0,
             ],
+            "line-blur": 2,
           },
         });
 
@@ -314,6 +354,14 @@ export default function MapView({
     const uSun = result.utci_sun_c;
     const uShade = result.utci_shade_c;
 
+    // Top 25 by human exposure get the halo.
+    const ranked = severe
+      .map((v, i) => [v, i] as [number, number])
+      .filter(([v]) => v > 0)
+      .sort((a, b) => b[0] - a[0])
+      .slice(0, 25);
+    const isHotspot = new Set(ranked.map(([, i]) => i));
+
     for (let i = 0; i < meta.seg_ids.length; i += 1) {
       // After ADAPT, a segment's sun fraction has fallen; recover it from the
       // change in its severe minutes so the map cools where shade was added.
@@ -329,6 +377,7 @@ export default function MapView({
         utci,
         severe: severe[i],
         sun,
+        hotspot: isHotspot.has(i),
       });
     }
   }, [result, adapted, meta.seg_ids.length]);
@@ -364,6 +413,8 @@ export default function MapView({
     set("canopy", layers.canopy);
     set("trees", layers.trees);
     set("trips", layers.trips);
+    set("agent-halo", layers.agents);
+    set("agent-dot", layers.agents);
     for (const h of meta.hours) set(`shadow-${h}`, layers.shadow && h === hour);
   }, [layers, hour, meta.hours]);
 
@@ -371,6 +422,44 @@ export default function MapView({
   // and both stylesheets set position:relative on it - which would override
   // an `absolute inset-0` here and collapse the map to zero height. So the
   // positioning lives on a wrapper and the container just fills it.
+  // --- moving agents -------------------------------------------------------
+  useEffect(() => {
+    const m = map.current;
+    const stop = () => {
+      if (raf.current !== null) cancelAnimationFrame(raf.current);
+      raf.current = null;
+    };
+    if (!m || !ready.current || !layers.agents || !result || !tripGeo.current) {
+      stop();
+      return stop;
+    }
+
+    agents.current = buildRoutes(tripGeo.current, persona, hour);
+    const src = m.getSource("agents");
+    if (!src || !agents.current.length) return stop;
+
+    // One full walk-through every 14 seconds, staggered so the cohort does
+    // not move as a single block.
+    const PERIOD = 14000;
+    const start = performance.now();
+    const tick = (now: number) => {
+      const base = ((now - start) % PERIOD) / PERIOD;
+      const features = agents.current.map((r, i) => {
+        const u = (base + i / agents.current.length) % 1;
+        const st = sampleRoute(r, u, result, meta.severe_threshold_utci_c);
+        return {
+          type: "Feature" as const,
+          properties: { utci: st.utci, severe: st.severeSoFar },
+          geometry: { type: "Point" as const, coordinates: [st.lon, st.lat] },
+        };
+      });
+      src.setData({ type: "FeatureCollection", features });
+      raf.current = requestAnimationFrame(tick);
+    };
+    raf.current = requestAnimationFrame(tick);
+    return stop;
+  }, [layers.agents, result, persona, hour, meta.severe_threshold_utci_c]);
+
   return (
     <div className="absolute inset-0">
       <div ref={ref} className="h-full w-full" />

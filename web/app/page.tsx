@@ -30,7 +30,8 @@ export default function Page() {
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<SourceMode>("live");
   const [layers, setLayers] = useState({
-    shadow: false, canopy: false, trees: false, buildings: false, trips: false,
+    shadow: false, canopy: false, trees: false, buildings: false,
+    trips: false, agents: true,
   });
   const [corridors, setCorridors] = useState<Record<string, string | null>>({});
 
@@ -83,7 +84,7 @@ export default function Page() {
     setAdapted(null);
     setError(null);
     setLayers({ shadow: false, canopy: false, trees: false,
-      buildings: false, trips: false });
+      buildings: false, trips: false, agents: true });
   }, []);
 
   // Human-exposure ranking. Deliberately separate from the map's colour:
@@ -146,6 +147,7 @@ export default function Page() {
           adapted={adapted}
           hour={sel.hour}
           layers={layers}
+          persona={sel.persona}
         />
 
         <div className="pointer-events-none absolute inset-0 p-4">
@@ -189,8 +191,14 @@ export default function Page() {
                 <span className="font-semibold text-red-700">38 °C</span>
                 <span>46</span>
               </div>
-              <div className="text-[10px] text-slate-600">
-                red = Very Strong Heat Stress
+              <div className="flex items-center gap-2 text-[10px] text-slate-600">
+                <span>red = Very Strong Heat Stress</span>
+                {result && (
+                  <span className="flex items-center gap-1">
+                    <span className="inline-block h-2 w-3 rounded-sm bg-red-900/25" />
+                    top-25 human hotspot
+                  </span>
+                )}
               </div>
             </div>
           )}

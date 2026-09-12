@@ -13,7 +13,7 @@ interface Props {
   onChange: (patch: Partial<Selection>) => void;
   layers: {
     shadow: boolean; canopy: boolean; trees: boolean;
-    buildings: boolean; trips: boolean;
+    buildings: boolean; trips: boolean; agents: boolean;
   };
   onLayers: (patch: Partial<Props["layers"]>) => void;
   mode: SourceMode;
@@ -198,6 +198,7 @@ export default function ControlPanel({
             ["trees", "City trees"],
             ["buildings", "Buildings"],
             ["trips", "Walking routes"],
+            ["agents", "Moving people"],
           ] as const).map(([key, label]) => (
             <label
               key={key}
