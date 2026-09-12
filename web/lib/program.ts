@@ -22,13 +22,33 @@ export interface Cell {
   scenario: string; hour: number; persona: string; weight?: number;
 }
 
+export type Scope = { corridor?: string; corridors?: string[] }
+  | string | string[];
+
 export interface Constraint {
-  type: "corridor_floor" | "spend_cap" | "spend_floor" | "focus";
-  scope?: { corridor?: string } | string;
+  type: "corridor_floor" | "spend_cap" | "spend_floor" | "focus"
+    | "kind_floor" | "kind_cap";
+  scope?: Scope;
   weight?: number;
+  kind?: string;
   min_units?: number;
+  max_units?: number;
   max_fraction?: number;
   min_fraction?: number;
+}
+
+/** Every corridor a scope names, in the order the program stated them. */
+function scopeNames(scope: Scope | undefined): string[] {
+  if (!scope) return [];
+  if (typeof scope === "string") return [scope];
+  if (Array.isArray(scope)) return scope.flatMap(scopeNames);
+  return [...(scope.corridor ? [scope.corridor] : []),
+    ...(scope.corridors ?? [])];
+}
+
+function list(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? "";
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }
 
 export interface ProgramSpec {
@@ -45,7 +65,15 @@ export interface CompileReply {
   repaired: boolean;
   restated: string | null;
   unsupported: string[];
-  verdict: { ok: boolean; reasons: string[]; missing: string[]; questions: string[] };
+  verdict: {
+    ok: boolean; reasons: string[]; missing: string[]; questions: string[];
+    /** Short street names the engine expanded, and why. */
+    resolved: { wrote: string; meant: string; why: string }[];
+    /** Real corridors an ambiguous reference could have meant. */
+    candidates: string[];
+  };
+  /** How the program checked out against the sentence it came from. */
+  audit: { kind: string; chose: string; candidates: string[]; message: string }[];
 }
 
 /** What the solver did, and how sure it is. */
@@ -154,13 +182,26 @@ export async function solve(spec: ProgramSpec): Promise<ProgramResult> {
 
 /** Plain-language rendering of one constraint, for people who do not read JSON. */
 export function describe(c: Constraint): string {
-  const where = typeof c.scope === "string"
-    ? c.scope : c.scope?.corridor ?? "every corridor";
+  const names = scopeNames(c.scope);
+  const where = names.length ? list(names) : "every corridor";
+  const n = c.min_units ?? 1;
+  const unit = `${n} unit${n === 1 ? "" : "s"}`;
+  const kind = (c.kind ?? "").replace(/_/g, " ");
   switch (c.type) {
     case "focus":
       return `Weight benefit on ${where} ×${c.weight ?? 1}`;
     case "corridor_floor":
-      return `Every walked corridor receives at least ${c.min_units ?? 1} unit`;
+      // A floor scoped to named streets is NOT a promise about every street,
+      // and saying so would misrepresent the plan in the one place a person
+      // reads it before it runs.
+      return names.length
+        ? `${list(names)} each receive at least ${unit}`
+        : `Every walked corridor receives at least ${unit}`;
+    case "kind_floor":
+      return `At least ${unit} of ${kind}`;
+    case "kind_cap":
+      return `At most ${c.max_units ?? 0} ${kind}${
+        (c.max_units ?? 0) === 1 ? "" : "s"}`;
     case "spend_cap":
       return `At most ${Math.round((c.max_fraction ?? 1) * 100)}% of the budget on ${where}`;
     case "spend_floor":

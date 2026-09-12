@@ -60,10 +60,22 @@ OBJECTIVES = {
 
 CONSTRAINT_TYPES = {
     "corridor_floor": {
-        "summary": "Every corridor carrying walking demand must receive "
+        "summary": "Named corridors - or every corridor carrying walking "
+                   "demand, if no scope is given - must each receive "
                    "something.",
         "fields": {"min_units": "int >= 1, units each corridor must receive",
-                   "scope": "optional; defaults to every corridor with demand"},
+                   "scope": "optional corridor or list of corridors; "
+                            "defaults to every corridor with demand"},
+    },
+    "kind_floor": {
+        "summary": "At least N units of one intervention type must be bought. "
+                   "Pure efficiency buys no shelters at 3 PM, so this is how "
+                   "'use both trees and shelters' is stated.",
+        "fields": {"kind": "tree | shaded_shelter", "min_units": "int >= 1"},
+    },
+    "kind_cap": {
+        "summary": "At most N units of one intervention type.",
+        "fields": {"kind": "tree | shaded_shelter", "max_units": "int >= 0"},
     },
     "spend_cap": {
         "summary": "No more than a share of the budget inside one scope.",
@@ -97,6 +109,73 @@ class SpecVerdict:
     reasons: list[str] = field(default_factory=list)
     missing: list[str] = field(default_factory=list)
     questions: list[str] = field(default_factory=list)
+    # Short forms the gate expanded to real corridor names, so a person can
+    # see what their words were taken to mean.
+    resolved: list[dict] = field(default_factory=list)
+
+
+def _rewrite_scope(scope, mapping: dict[str, str]):
+    """Rebuild a scope with every name replaced by its resolved form."""
+    if isinstance(scope, str):
+        return mapping.get(scope, scope)
+    if isinstance(scope, list):
+        return [_rewrite_scope(x, mapping) for x in scope]
+    if isinstance(scope, dict):
+        out = dict(scope)
+        if "corridor" in out:
+            out["corridor"] = _rewrite_scope(out["corridor"], mapping)
+        if "corridors" in out:
+            out["corridors"] = _rewrite_scope(out["corridors"], mapping)
+        return out
+    return scope
+
+
+def resolve_corridors(spec: dict, engine) -> tuple[list[dict], list[str]]:
+    """Expand short street names deterministically, or refuse and say why.
+
+    Oakland has both a North and a South Craig Street, so "Craig Street" is
+    genuinely ambiguous. Leaving that judgement to the language model made it
+    non-deterministic - one run picked South, the next declined - which is the
+    worst of both worlds. The rule now lives here: an exact match stands, a
+    name matching exactly one corridor is expanded and reported, and a name
+    matching several is refused with the candidates named so a person can
+    choose. The model never guesses a street.
+    """
+    known = sorted({c for c in engine.seg_corridor.values() if c})
+    lower = {c.lower(): c for c in known}
+    mapping: dict[str, str] = {}
+    resolved: list[dict] = []
+    problems: list[str] = []
+
+    for k in spec.get("constraints") or []:
+        for raw in _scope_names(k.get("scope")):
+            if raw in known or raw in mapping:
+                continue
+            if raw.lower() in lower:
+                mapping[raw] = lower[raw.lower()]
+                resolved.append({"wrote": raw, "meant": lower[raw.lower()],
+                                 "why": "differs only in capitalisation"})
+                continue
+            needle = raw.lower().strip()
+            hits = [c for c in known
+                    if needle in c.lower() or c.lower() in needle]
+            if len(hits) == 1:
+                mapping[raw] = hits[0]
+                resolved.append({"wrote": raw, "meant": hits[0],
+                                 "why": "the only corridor it can mean"})
+            elif len(hits) > 1:
+                problems.append(
+                    f"'{raw}' is ambiguous - it could mean "
+                    + " or ".join(f"'{h}'" for h in hits)
+                    + ". Name the one you want; the engine will not guess.")
+            else:
+                problems.append(f"'{raw}' is not a corridor in the modelled "
+                                f"network.")
+    if mapping:
+        for k in spec.get("constraints") or []:
+            if "scope" in k:
+                k["scope"] = _rewrite_scope(k["scope"], mapping)
+    return resolved, problems
 
 
 def validate_spec(spec: dict, engine) -> SpecVerdict:
@@ -145,6 +224,15 @@ def validate_spec(spec: dict, engine) -> SpecVerdict:
                            f"'{c.get('persona')}'.")
             missing.append(f"cells[{n}].persona")
 
+    # Resolve short street names BEFORE checking them, so "Fifth" is
+    # expanded rather than refused, and "Craig Street" is refused with both
+    # candidates named rather than silently resolved to one of them.
+    resolved, scope_problems = resolve_corridors(spec, engine)
+    reasons.extend(scope_problems)
+    if scope_problems:
+        missing.append("constraints.scope")
+        questions.extend(p for p in scope_problems if "ambiguous" in p)
+
     known = {c for c in engine.seg_corridor.values() if c}
     for n, k in enumerate(spec.get("constraints") or []):
         kind = str(k.get("type") or "")
@@ -154,15 +242,11 @@ def validate_spec(spec: dict, engine) -> SpecVerdict:
                            f"{', '.join(CONSTRAINT_TYPES)}.")
             missing.append(f"constraints[{n}].type")
             continue
-        for name in _scope_names(k.get("scope")):
-            if name not in known:
-                near = [c for c in known if name.lower() in c.lower()
-                        or c.lower() in name.lower()]
-                reasons.append(
-                    f"constraints[{n}]: '{name}' is not a corridor in the "
-                    f"modelled network."
-                    + (f" Closest match: {near[0]}." if near else ""))
-                missing.append(f"constraints[{n}].scope")
+        # Any name still unresolved was already reported once, by name, with
+        # its candidates. Reporting it again here only told a person the same
+        # thing twice in different words.
+        if any(name not in known for name in _scope_names(k.get("scope"))):
+            continue
         if kind == "spend_cap":
             f = k.get("max_fraction")
             if not isinstance(f, (int, float)) or not 0 < float(f) <= 1:
@@ -180,8 +264,21 @@ def validate_spec(spec: dict, engine) -> SpecVerdict:
             if not isinstance(w, (int, float)) or float(w) <= 0:
                 reasons.append(f"constraints[{n}]: weight must be above zero.")
                 missing.append(f"constraints[{n}].weight")
+        if kind in ("kind_floor", "kind_cap"):
+            kk = str(k.get("kind") or "")
+            if kk not in INTERVENTIONS:
+                reasons.append(f"constraints[{n}]: '{kk or 'none'}' is not an "
+                               f"intervention this engine models. Available: "
+                               f"{', '.join(INTERVENTIONS)}.")
+                missing.append(f"constraints[{n}].kind")
+            field = "min_units" if kind == "kind_floor" else "max_units"
+            v = k.get(field)
+            if not isinstance(v, int) or v < 0:
+                reasons.append(f"constraints[{n}]: {field} must be a "
+                               f"non-negative whole number of units.")
+                missing.append(f"constraints[{n}].{field}")
 
-    return SpecVerdict(not missing, reasons, missing, questions[:3])
+    return SpecVerdict(not missing, reasons, missing, questions[:3], resolved)
 
 
 def _scope_names(scope) -> list[str]:
@@ -409,6 +506,32 @@ def solve(engine, adapter, spec: dict) -> dict:
                               f"than forced (that would be infeasible, not fair)"
                               if skipped else "")})
 
+        elif kind in ("kind_floor", "kind_cap"):
+            want = str(k["kind"])
+            cc = ([tree_of[i] for i in tree_of] if want == "tree"
+                  else list(shel_of.values()))
+            if not cc:
+                stated.append({"type": kind, "kind": want, "status": "vacuous",
+                               "note": f"no {want} site exists in this "
+                                       f"network, so the constraint cannot "
+                                       f"bind."})
+                continue
+            if kind == "kind_floor":
+                need = int(k["min_units"])
+                rows.append((cc, [1.0] * len(cc), float(need), np.inf))
+                stated.append({"type": kind, "kind": want, "units": need,
+                               "sense": ">=", "status": "applied",
+                               "note": f"at least {need} {want.replace('_', ' ')}"
+                                       f"(s) must be bought, whether or not "
+                                       f"efficiency alone would choose any"})
+            else:
+                lim = int(k["max_units"])
+                rows.append((cc, [1.0] * len(cc), -np.inf, float(lim)))
+                stated.append({"type": kind, "kind": want, "units": lim,
+                               "sense": "<=", "status": "applied",
+                               "note": f"at most {lim} "
+                                       f"{want.replace('_', ' ')}(s)"})
+
         elif kind == "focus":
             stated.append({"type": kind, "scope": sorted(names),
                            "weight": float(k.get("weight", 1.0)),
@@ -575,3 +698,84 @@ def materialise(engine, adapter, spec: dict, sol: dict) -> dict:
         "solver": sol["solver"],
         "constraint_report": sol["constraint_report"],
     }
+
+
+# --- auditing a compiled program against the sentence it came from ---------
+
+def _tokens(text: str) -> list[str]:
+    """Words, lowercased, punctuation dropped.
+
+    Token matching rather than substring matching, because "University Drive
+    A" ends in a word that occurs as a substring of almost any sentence.
+    """
+    import re as _re
+    return _re.findall(r"[a-z0-9]+", text.lower())
+
+
+def _has_run(seq: list[str], run: list[str]) -> bool:
+    n = len(run)
+    return n > 0 and any(seq[i:i + n] == run for i in range(len(seq) - n + 1))
+
+
+def _longest_mention(name: str, text_tokens: list[str]) -> list[str]:
+    """The longest run of words from `name` the planner actually wrote."""
+    w = _tokens(name)
+    for span in range(len(w), 0, -1):
+        for i in range(len(w) - span + 1):
+            if _has_run(text_tokens, w[i:i + span]):
+                return w[i:i + span]
+    return []
+
+
+def audit_references(spec: dict, text: str, engine) -> list[dict]:
+    """Check every street the program names against what the planner wrote.
+
+    This exists because of a real failure. Asked to guarantee something on
+    "Craig Street", the model emitted "North Craig Street" - a valid corridor,
+    so every name check passed - when Oakland has both a North and a South
+    Craig Street and the planner meant neither in particular. A model silently
+    narrowing an ambiguous reference to one valid option is the exact failure
+    this architecture exists to prevent, and no amount of prompting makes it
+    reliable.
+
+    So the program is verified against its source. For each corridor the
+    program names, find the longest run of that name the planner actually
+    wrote, then ask how many corridors that run could mean. More than one and
+    the planner is asked which; none and the reference is reported as absent
+    from the sentence entirely.
+
+    Judging each reference by its OWN wording matters: "prioritise Fifth and
+    cap Forbes" mentions two streets, and an earlier version that compared
+    support globally called them rivals for the same slot.
+    """
+    known = sorted({c for c in engine.seg_corridor.values() if c})
+    tok = {c: _tokens(c) for c in known}
+    text_tokens = _tokens(text)
+    seen: set[str] = set()
+    out: list[dict] = []
+
+    for k in spec.get("constraints") or []:
+        for name in _scope_names(k.get("scope")):
+            if name in seen or name not in known:
+                continue
+            seen.add(name)
+            mention = _longest_mention(name, text_tokens)
+            if not mention:
+                out.append({
+                    "kind": "unmentioned", "chose": name, "candidates": [],
+                    "message": (f"The program constrains '{name}', but your "
+                                f"sentence never mentions it."),
+                })
+                continue
+            could_mean = [c for c in known if _has_run(tok[c], mention)]
+            if len(could_mean) > 1:
+                out.append({
+                    "kind": "ambiguous", "chose": name,
+                    "candidates": sorted(could_mean),
+                    "message": (
+                        f"You wrote \"{' '.join(mention)}\", which could mean "
+                        + " or ".join(f"'{c}'" for c in sorted(could_mean))
+                        + f". The program picked '{name}'. Name the one you "
+                        f"want; the engine will not guess."),
+                })
+    return out

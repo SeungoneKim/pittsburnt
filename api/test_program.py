@@ -145,6 +145,80 @@ def main() -> int:
     check("an infeasible program is reported, not quietly relaxed",
           imp["status"] == "infeasible", imp["solver"]["note"][:70])
 
+    # --- the second demo sentence, as a program ---------------------------
+    # "...guarantee at least one intervention on Fifth Avenue and Craig
+    # Street ... and use both trees and shaded waiting shelters"
+    both, _ = run([
+        {"type": "focus", "scope": {"corridor": "Forbes Avenue"}, "weight": 3},
+        {"type": "corridor_floor", "min_units": 1,
+         "scope": ["Fifth Avenue", "South Craig Street"]},
+        {"type": "spend_cap", "scope": {"corridor": "Forbes Avenue"},
+         "max_fraction": 0.5},
+        {"type": "kind_floor", "kind": "tree", "min_units": 1},
+        {"type": "kind_floor", "kind": "shaded_shelter", "min_units": 1}])
+    check("efficiency alone buys no shelter at this hour",
+          int(free["shelters"].sum()) == 0,
+          "so 'use both kinds' has to be stated, not hoped for")
+    check("a kind floor forces a shelter efficiency would not buy",
+          int(both["shelters"].sum()) >= 1,
+          f"{int(both['trees'].sum())} trees + {int(both['shelters'].sum())} shelter")
+    named = spend_by_corridor(both)
+    check("a scoped corridor floor reaches exactly the named streets",
+          named.get("Fifth Avenue", 0) > 0
+          and named.get("South Craig Street", 0) > 0,
+          f"Fifth ${named.get('Fifth Avenue', 0):,}  "
+          f"S Craig ${named.get('South Craig Street', 0):,}")
+    check("a scoped floor does NOT force every other corridor",
+          len([c for c, v in named.items() if c and v]) < 30,
+          f"{len([c for c in named if c])} corridors touched, not all 67")
+    cap3 = next(r for r in both["constraint_report"] if r["type"] == "spend_cap")
+    check("the Forbes cap binds once Forbes is also prioritised",
+          cap3["status"] == "binding", cap3["note"][:70])
+
+    # --- the gate refuses an intervention type the engine lacks ------------
+    _, bad4 = run([{"type": "kind_floor", "kind": "misting_fan",
+                    "min_units": 2}])
+    check("a kind floor naming an intervention we do not model is refused",
+          not bad4.ok and any("misting_fan" in r for r in bad4.reasons),
+          bad4.reasons[0][:75] if bad4.reasons else "")
+
+    # --- the program is audited against the sentence it came from ---------
+    # A model that narrows "Craig Street" to one of the two real Craig
+    # Streets writes a VALID program that answers a question nobody asked.
+    # Only the source text can catch that, so the audit reads it.
+    def audit(text, cons):
+        return program.audit_references({"constraints": cons}, text, e)
+
+    amb = audit("guarantee one intervention on Craig Street",
+                [{"type": "corridor_floor", "min_units": 1,
+                  "scope": ["North Craig Street"]}])
+    check("a silently narrowed street reference is caught",
+          len(amb) == 1 and amb[0]["kind"] == "ambiguous",
+          amb[0]["message"][:72] if amb else "nothing flagged")
+    check("both real candidates are offered back",
+          amb and amb[0]["candidates"] == ["North Craig Street",
+                                           "South Craig Street"])
+    check("naming the street explicitly passes the audit",
+          not audit("guarantee one intervention on South Craig Street",
+                    [{"type": "corridor_floor", "min_units": 1,
+                      "scope": ["South Craig Street"]}]))
+    # Two short names in one sentence are two references, not rivals for one
+    # slot - an earlier version compared support globally and flagged both.
+    check("two different short names in one sentence are not rivals",
+          not audit("Prioritise Fifth and cap Forbes at a third of the budget",
+                    [{"type": "focus", "scope": {"corridor": "Fifth Avenue"},
+                      "weight": 3},
+                     {"type": "spend_cap",
+                      "scope": {"corridor": "Forbes Avenue"},
+                      "max_fraction": 0.33}]),
+          "Fifth -> Fifth Avenue, Forbes -> Forbes Avenue")
+    unm = audit("Spread the money around",
+                [{"type": "corridor_floor", "min_units": 1,
+                  "scope": ["Forbes Avenue"]}])
+    check("a street the sentence never mentions is reported",
+          len(unm) == 1 and unm[0]["kind"] == "unmentioned",
+          unm[0]["message"][:70] if unm else "nothing flagged")
+
     # --- determinism -------------------------------------------------------
     r1, _ = run([{"type": "corridor_floor", "min_units": 1}])
     r2, _ = run([{"type": "corridor_floor", "min_units": 1}])

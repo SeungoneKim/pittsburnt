@@ -163,13 +163,53 @@ runs. HiGHS then solves it exactly. Measured on that sentence:
 price of fairness, measured rather than asserted — and it is the number the
 hard-coded policy was hiding.
 
-The vocabulary is four declarative constraints — `corridor_floor`, `spend_cap`,
-`spend_floor`, `focus` — and the compiler is checked against the engine's real
-options. Ask for a street that does not exist, a tree count, a deadline or a
-health outcome and it is listed as **not expressible** rather than approximated
-into a number. Every constraint's fate is reported afterwards, including the
-ones that never bound: in the sentence above the Forbes cap never binds, and
-the panel says so instead of taking credit for it.
+The vocabulary is six declarative constraints — `corridor_floor` (optionally
+scoped to named streets), `kind_floor`, `kind_cap`, `spend_cap`, `spend_floor`
+and `focus`. Every constraint's fate is reported afterwards, including the ones
+that never bound: in the sentence above the Forbes cap never binds, and the
+panel says so instead of taking credit for it.
+
+A second sentence exercises the rest of the vocabulary:
+
+> *"Use a $250,000 budget to protect older adults. Prioritize Forbes Avenue,
+> guarantee at least one intervention on Fifth Avenue and South Craig Street,
+> cap spending on Forbes at 50% of the total budget, and use both trees and
+> shaded waiting shelters where they produce measurable impact."*
+
+That compiles to five constraints and buys **195 trees + 1 shelter**. Pure
+efficiency buys *zero* shelters at 3 PM, so `kind_floor` is the only way to
+require one — and here the Forbes cap does bind, at $124,200 of its $125,000
+ceiling. Only *"where they produce measurable impact"* comes back unsupported,
+which is fair: it is not a constraint.
+
+### The model never guesses a street
+
+Two safeguards, both deterministic, both built after watching the model fail.
+
+**Name resolution moved out of the model.** Asked about "Craig Street" the
+compiler was inconsistent between runs — one resolved it to South, the next
+declined it as ambiguous. Oakland has *both* a North and a South Craig Street,
+so it was right to hesitate, but a demo cannot vary. Resolution now happens in
+the gate: an exact match stands, a name matching exactly one corridor is
+expanded and reported, and a name matching several is refused with the
+candidates named. Compilation runs at temperature 0.
+
+**The program is audited against the sentence it came from.** Prompted harder,
+the model stopped hesitating and silently emitted `North Craig Street` — a
+valid corridor, so every name check passed, for a question nobody asked. That
+is the exact failure this architecture exists to prevent, and no prompt makes
+it reliable. So each corridor the program names is checked back against the
+planner's own words: find the longest run of that name they actually wrote,
+then ask how many corridors it could mean. More than one and the plan does not
+run; the panel offers the real candidates as one-click fixes. A street the
+sentence never mentions at all is reported too.
+
+Judging each reference by its own wording matters — "prioritise Fifth and cap
+Forbes" names two streets, and a first version that compared support globally
+called them rivals for the same slot.
+
+Ask for a street that does not exist, a deadline, a species or a health outcome
+and it is listed as **not expressible** rather than approximated into a number.
 
 Why the MILP is exact rather than an approximation: capacity is one site per
 `SITE_SPACING_M` = 10 m while a crown spans `shade_m` = 8 m, so coverage can

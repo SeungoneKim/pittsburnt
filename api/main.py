@@ -526,6 +526,7 @@ def program_compile(req: CompileRequest) -> dict:
 
     v = program.validate_spec(spec, engine)
     repaired = False
+    audit: list[dict] = []
     if not v.ok:
         # The gate says what is wrong; the model only rewrites. If the second
         # attempt still fails we show the refusal, which is a good outcome.
@@ -536,11 +537,22 @@ def program_compile(req: CompileRequest) -> dict:
                 spec, v, repaired = spec2, v2, True
         except Exception:
             pass
-    return {"spec": spec, "repaired": repaired,
+    # Verify the program against the sentence it came from. A model that
+    # narrows "Craig Street" to "North Craig Street" writes a valid program
+    # that answers a question nobody asked, and only the source text can
+    # catch that.
+    if v.ok:
+        audit = program.audit_references(spec, req.text, engine)
+    ok = v.ok and not any(a["kind"] == "ambiguous" for a in audit)
+    return {"spec": spec, "repaired": repaired, "audit": audit,
             "restated": spec.get("restated"),
             "unsupported": spec.get("unsupported") or [],
-            "verdict": {"ok": v.ok, "reasons": v.reasons,
-                        "missing": v.missing, "questions": v.questions}}
+            "verdict": {"ok": ok,
+                        "reasons": v.reasons + [a["message"] for a in audit],
+                        "missing": v.missing, "questions": v.questions,
+                        "resolved": v.resolved,
+                        "candidates": sorted({c for a in audit
+                                              for c in a["candidates"]})}}
 
 
 @app.post("/program/solve")

@@ -124,14 +124,15 @@ def provider() -> dict:
 
 
 def _chat(messages: list[dict], json_mode: bool = False,
-          timeout: float = TIMEOUT_S) -> str:
+          timeout: float = TIMEOUT_S, temperature: float = 0.2) -> str:
     base = (os.environ.get("IFM_BASE_URL") or "").rstrip("/")
     key = os.environ.get("IFM_API_KEY")
     model = os.environ.get("IFM_MODEL")
     if not (base and key and model):
         raise RuntimeError("IFM_BASE_URL, IFM_API_KEY and IFM_MODEL must be set")
 
-    body: dict = {"model": model, "messages": messages, "temperature": 0.2}
+    body: dict = {"model": model, "messages": messages,
+                  "temperature": temperature}
     if json_mode:
         # Honoured by most OpenAI-compatible servers; harmless where it is
         # not, because _json_object below also copes with a fenced reply.
@@ -257,7 +258,7 @@ Return ONE JSON object and nothing else. No prose, no code fence.
   "unsupported": [ "any part of the request this vocabulary cannot express" ]
 }
 
-CONSTRAINT VOCABULARY - use only these four:
+CONSTRAINT VOCABULARY - use only these six:
 
   {"type":"focus","scope":{"corridor":NAME},"weight":N}
       A PREFERENCE. Weights benefit on that corridor N times higher in the
@@ -265,9 +266,16 @@ CONSTRAINT VOCABULARY - use only these four:
       Default weight 3.
 
   {"type":"corridor_floor","min_units":N}
-      Every corridor carrying walking demand must receive at least N units.
+      EVERY corridor carrying walking demand must receive at least N units.
       Use for "don't let any corridor get nothing", "spread it around",
       "nowhere left out". Default min_units 1.
+
+  {"type":"corridor_floor","min_units":N,"scope":[NAME, NAME, ...]}
+      The SAME constraint restricted to named corridors. Use this whenever
+      the planner names the streets that must not be left out - "guarantee
+      at least one intervention on Fifth Avenue and Craig Street" is
+      {"type":"corridor_floor","min_units":1,
+       "scope":["Fifth Avenue","South Craig Street"]}.
 
   {"type":"spend_cap","scope":{"corridor":NAME},"max_fraction":F}
       At most fraction F of the budget inside that scope. Use for "cap Y at
@@ -276,16 +284,33 @@ CONSTRAINT VOCABULARY - use only these four:
   {"type":"spend_floor","scope":{"corridor":NAME},"min_fraction":F}
       At least fraction F of the budget inside that scope.
 
+  {"type":"kind_floor","kind":K,"min_units":N}
+      At least N units of intervention type K, where K is "tree" or
+      "shaded_shelter". Use for "use both trees and shelters", "make sure
+      some shelters get built", "include waiting shelters". Pure efficiency
+      buys zero shelters at 3 PM, so this is the ONLY way to require them.
+      "use both X and Y" means TWO kind_floor constraints, one per type.
+
+  {"type":"kind_cap","kind":K,"max_units":N}
+      At most N units of type K.
+
 RULES
 
-1. Every "corridor" value MUST be copied exactly from CORRIDORS below. Never
-   invent or abbreviate a street name. If the planner names a street that is
-   not in the list, omit that constraint and say so in "unsupported".
+1. Every "corridor" value MUST be one of the CORRIDORS listed below, copied
+   character for character. You MAY resolve an unambiguous short form: if
+   the planner writes a name that matches exactly ONE list entry as a
+   substring - "Fifth" matches "Fifth Avenue" - emit the FULL list entry.
+   If you cannot decide, still emit the constraint using the planner's own
+   wording: the engine resolves short names itself, and refuses ambiguous
+   ones by naming the candidates. Do NOT drop a constraint just because a
+   street name looks unfamiliar, and do NOT guess between two streets.
 2. "persona", "hour" and "scenario" MUST come from the lists below. If the
-   sentence does not state one, use the DEFAULT given.
+   sentence does not state one, use the CURRENTLY SELECTED value.
 3. If the sentence asks for something this vocabulary cannot express - a
-   specific number of trees, a deadline, a material, a health outcome - do
-   NOT approximate it. Leave it out and list it in "unsupported".
+   deadline, a species, a material, a health outcome, a claim about what is
+   "measurable" - do NOT approximate it. Leave it out and list it in
+   "unsupported". Before doing so, check the vocabulary again: counts of an
+   intervention type, and floors on named corridors, ARE expressible.
 4. Prefer "min_heat_load". Use "min_severe" only if the planner explicitly
    asks about the severe or 38 C threshold.
 5. "protect <group> on <street>" means BOTH: set the persona to that group,
@@ -304,16 +329,21 @@ def compile_program(text: str, vocabulary: dict) -> dict:
         f"PERSONAS: {', '.join(vocabulary['personas'])}\n"
         f"HOURS: {', '.join(str(h) for h in vocabulary['hours'])}\n"
         f"SCENARIOS: {', '.join(vocabulary['scenarios'])}\n"
-        f"DEFAULT scenario={vocabulary['default_scenario']} "
+        f"CURRENTLY SELECTED (use these when the sentence does not say, and "
+        f"do not call them 'default' when you restate the program): "
+        f"scenario={vocabulary['default_scenario']} "
         f"hour={vocabulary['default_hour']} "
         f"persona={vocabulary['default_persona']} "
         f"budget_usd={vocabulary['default_budget']}\n"
         f"CORRIDORS (exact names, copy verbatim):\n"
         + "\n".join(f"  {c}" for c in vocabulary["corridors"])
     )
+    # Temperature 0: the same sentence must compile to the same program every
+    # time. At 0.2 one run resolved "Craig Street" to South and the next
+    # declined it as ambiguous, which is not something to discover on stage.
     raw = _chat([{"role": "system", "content": PROGRAM_SYSTEM},
                  {"role": "user", "content": f"{ctx}\n\nSENTENCE: {text[:600]}"}],
-                json_mode=True)
+                json_mode=True, temperature=0.0)
     return _json_object(raw)
 
 

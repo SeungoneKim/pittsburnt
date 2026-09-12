@@ -59,6 +59,36 @@ export default function AdjustModal({
             className="text-[13px] text-slate-400 hover:text-slate-700">Close</button>
         </div>
 
+        {/* Say what the plan must achieve and let a solver answer, instead of
+            choosing between two policies someone hard-coded. */}
+        <button
+          onClick={onOpenProgram}
+          className="mt-4 w-full rounded-xl border-2 border-indigo-300
+            bg-indigo-50 px-4 py-3 text-left transition hover:border-indigo-500
+            hover:bg-indigo-100"
+        >
+          <span className="text-[15px] font-bold text-indigo-900">
+            State a goal in plain English
+            <span className="ml-1.5 rounded bg-indigo-200 px-1 py-0.5
+              text-[9px] font-bold uppercase tracking-wide text-indigo-900">
+              solver
+            </span>
+          </span>
+          <span className="block text-[11.5px] leading-snug text-indigo-900/70">
+            &ldquo;Protect older adults on Forbes, don&rsquo;t let any corridor
+            get nothing, cap Forbes at half the budget&rdquo; — a solver returns
+            the provably optimal plan for exactly that.
+          </span>
+        </button>
+
+        <div className="mt-4 flex items-center gap-2">
+          <span className="h-px flex-1 bg-slate-200" />
+          <span className="text-[11px] uppercase tracking-wider text-slate-400">
+            or set it by hand
+          </span>
+          <span className="h-px flex-1 bg-slate-200" />
+        </div>
+
         <label className="mt-4 block text-[12px] uppercase tracking-wider text-slate-500">
           Budget
         </label>
@@ -116,26 +146,6 @@ export default function AdjustModal({
           A policy choice, not an unconstrained discovery — waiting is a small
           share of exposure, so pure efficiency never protects a waiting rider.
         </p>
-
-        {/* Say what the plan must achieve and let a solver answer, instead of
-            choosing between two policies someone hard-coded. */}
-        <button
-          onClick={onOpenProgram}
-          className="mt-4 w-full rounded-xl border border-indigo-200
-            bg-indigo-50 px-3 py-2 text-left transition hover:border-indigo-400"
-        >
-          <span className="text-[13px] font-semibold text-indigo-900">
-            State a goal instead
-            <span className="ml-1.5 rounded bg-indigo-200 px-1 py-0.5
-              text-[9px] font-bold uppercase tracking-wide text-indigo-900">
-              solver
-            </span>
-          </span>
-          <span className="block text-[11.5px] leading-snug text-indigo-900/70">
-            Describe what the plan has to achieve — including who must not be
-            left out — and get the provably optimal plan for it.
-          </span>
-        </button>
 
         {/* The two built-ins are the demo. A custom solution is a Beta side
             door: it never blocks, and never changes, the main loop. */}

@@ -9,9 +9,16 @@ import type { ReadySelection } from "@/lib/types";
 const EXAMPLES = [
   "Protect older adults on Forbes, don't let any corridor get nothing, "
   + "cap Forbes at half the budget",
+  "Use a $250,000 budget to protect older adults. Prioritize Forbes Avenue, "
+  + "guarantee at least one intervention on Fifth Avenue and Craig Street, "
+  + "cap spending on Forbes at 50% of the total budget, and use both trees "
+  + "and shaded waiting shelters where they produce measurable impact.",
   "Spread the money so nowhere gets left out",
   "Prioritise students at noon and spend at least a third on Fifth Avenue",
 ];
+
+const CHIP_LABEL = ["", "Forbes + Fifth + Craig, both kinds",
+  "Spread it around", "Students at noon"];
 
 /**
  * State a goal; a solver answers it.
@@ -96,17 +103,18 @@ export default function ProgramPanel({ sel, onPlan, onClose }: {
           </p>
 
           <div>
-            <textarea rows={3} value={text} disabled={busy}
+            <textarea rows={4} value={text} disabled={busy}
               onChange={(e) => setText(e.target.value)}
               className="w-full rounded-lg border border-slate-300 px-3 py-2
                 text-[14px] outline-none focus:ring-2 focus:ring-indigo-300
                 disabled:bg-slate-50" />
             <div className="mt-1.5 flex flex-wrap gap-1.5">
-              {EXAMPLES.slice(1).map((x) => (
+              {EXAMPLES.slice(1).map((x, i) => (
                 <button key={x} onClick={() => setText(x)} disabled={busy}
+                  title={x}
                   className="rounded-full border border-slate-200 px-2.5 py-1
                     text-[11.5px] text-slate-600 hover:border-slate-400">
-                  {x.length > 46 ? `${x.slice(0, 44)}…` : x}
+                  {CHIP_LABEL[i + 1]}
                 </button>
               ))}
             </div>
@@ -164,6 +172,18 @@ export default function ProgramPanel({ sel, onPlan, onClose }: {
                 </ul>
               )}
 
+              {reply.verdict.resolved?.length > 0 && (
+                <p className="mt-2 rounded-lg bg-sky-50 p-2 text-[11.5px]
+                  text-sky-900">
+                  Street names expanded:{" "}
+                  {reply.verdict.resolved.map((r) => (
+                    <span key={r.wrote}>
+                      &ldquo;{r.wrote}&rdquo; → <b>{r.meant}</b>{" "}
+                    </span>
+                  ))}
+                </p>
+              )}
+
               {reply.unsupported.length > 0 && (
                 <div className="mt-2 rounded-lg bg-amber-50 p-2">
                   <b className="text-[12px] text-amber-900">
@@ -176,11 +196,29 @@ export default function ProgramPanel({ sel, onPlan, onClose }: {
               )}
 
               {!reply.verdict.ok && (
-                <div className="mt-2 rounded-lg bg-red-50 p-2 text-[12px] text-red-900">
-                  <b>Refused.</b>
-                  <ul className="mt-0.5 list-disc pl-4">
+                <div className="mt-2 rounded-lg bg-red-50 p-3 text-[12px]
+                  text-red-900">
+                  <b>Not run — the engine will not guess.</b>
+                  <ul className="mt-1 list-disc pl-4">
                     {reply.verdict.reasons.map((r) => <li key={r}>{r}</li>)}
                   </ul>
+                  {/* An ambiguous street is fixable in one click rather than
+                      by retyping the whole sentence. The candidates come from
+                      the engine, not from parsing its prose. */}
+                  {(reply.verdict.candidates ?? []).length > 0 && (
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                      <span className="text-[11px]">Did you mean:</span>
+                      {reply.verdict.candidates.map((c) => (
+                        <button key={c}
+                          onClick={() => setText(disambiguate(text, c))}
+                          className="rounded-full border border-red-300
+                            bg-white px-2.5 py-1 text-[11.5px] font-medium
+                            text-red-900 hover:bg-red-100">
+                          {c}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -241,6 +279,21 @@ export default function ProgramPanel({ sel, onPlan, onClose }: {
       </aside>
     </div>
   );
+}
+
+/** Swap the ambiguous fragment in the sentence for the chosen corridor. */
+function disambiguate(text: string, chosen: string): string {
+  // "South Craig Street" shares "Craig Street" with the ambiguous wording,
+  // so replacing the longest shared suffix is enough and leaves the rest of
+  // the sentence exactly as the planner wrote it.
+  const words = chosen.split(" ");
+  for (let i = 0; i < words.length; i += 1) {
+    const tail = words.slice(i).join(" ");
+    if (tail !== chosen && text.includes(tail)) {
+      return text.replace(tail, chosen);
+    }
+  }
+  return text;
 }
 
 function Row({ k, v }: { k: string; v: string }) {

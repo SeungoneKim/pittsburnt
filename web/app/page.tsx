@@ -288,6 +288,18 @@ export default function Page() {
         {/* Clear of the dev overlay badge that sits in the bottom-left corner. */}
         <div className="pointer-events-auto absolute bottom-6 left-16 flex gap-2
           max-[1400px]:bottom-4">
+          {/* The headline capability should not be three clicks deep. It
+              needs a crash result to improve on, so it appears with one. */}
+          {result && (
+            <button
+              onClick={() => setProg(true)}
+              className="rounded-lg border-2 border-indigo-400 bg-indigo-600
+                px-3 py-2 text-[13px] font-semibold text-white shadow
+                hover:bg-indigo-700"
+            >
+              State a goal
+            </button>
+          )}
           <button
             onClick={() => setSources("provenance")}
             className="rounded-lg border border-slate-300 bg-white/95 px-3 py-2
