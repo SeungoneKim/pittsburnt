@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 
 import copy
 
-import gemini
+import llm
 import solutions
 from engine import (HEAT_LOAD_BASE_C, INTERVENTIONS, SEVERE_UTCI_C, Adapter,
                     Engine)
@@ -331,15 +331,21 @@ def _verdict(draft: dict) -> dict:
 @app.get("/solutions/mechanisms")
 def solution_mechanisms() -> dict:
     """What this engine can honestly represent, and what each route needs."""
-    return {"configured": gemini.configured(),
+    return {"provider": llm.provider(),
+            "configured": llm.configured(),
             "mechanisms": solutions.catalogue(),
             "examples": [{"draft": d, "verdict": _verdict(d)}
                          for d in EXAMPLE_DRAFTS],
             "boundary": (
-                "Gemini may search, structure and question. It never invents "
-                "an effect, chooses a coordinate, alters an engine array or "
+                "The model may draft and question. It never invents an "
+                "effect, chooses a coordinate, alters an engine array or "
                 "commits a cost. Every placement and every impact number in a "
-                "simulated plan comes from the deterministic engine.")}
+                "simulated plan comes from the deterministic engine."),
+            "grounding_note": (
+                "This provider has no retrieval tool, so it answers from its "
+                "weights. Any figure it calls sourced is downgraded to an "
+                "assumption before you see it: a recalled number is a "
+                "suggestion, not a citation.")}
 
 
 @app.post("/solutions/chat")
@@ -350,18 +356,32 @@ def solution_chat(req: SolutionChatRequest) -> dict:
     the cached example drafts are returned and clearly labelled as such, so
     the Crash -> Adjust -> Re-test loop stays fully local-first.
     """
-    if not gemini.configured():
-        return {"mode": "cached", "reason": "GEMINI_API_KEY is not configured",
-                "examples": [{"draft": d, "verdict": _verdict(d)}
-                             for d in EXAMPLE_DRAFTS]}
+    cached = {"mode": "cached",
+              "provider": llm.provider(),
+              "examples": [{"draft": d, "verdict": _verdict(d)}
+                           for d in EXAMPLE_DRAFTS]}
+    if not llm.configured():
+        return {**cached,
+                "reason": "IFM_BASE_URL / IFM_API_KEY / IFM_MODEL are not set"}
     try:
-        out = gemini.draft_solution(req.text)
-    except Exception as exc:                      # network, quota, bad JSON
-        return {"mode": "cached", "reason": f"live research unavailable: {exc}",
-                "examples": [{"draft": d, "verdict": _verdict(d)}
-                             for d in EXAMPLE_DRAFTS]}
-    return {"mode": "live", "draft": out["draft"], "research": out["research"],
-            "sources": out["sources"], "verdict": _verdict(out["draft"])}
+        out = llm.draft_solution(req.text)
+    except Exception as exc:                  # network, quota, malformed reply
+        return {**cached, "reason": f"the model is unavailable: {exc}"}
+
+    verdict = _verdict(out["draft"])
+    # If the gate refused, let the model ask for exactly what is missing.
+    # This is the one place it is allowed to be creative, because a question
+    # cannot become a number without a person answering it.
+    questions = verdict["questions"]
+    if not verdict["can_simulate"] and verdict["missing"]:
+        questions = (llm.clarify(req.text, verdict["missing"],
+                                 " ".join(verdict["reasons"]))
+                     or questions)
+    return {"mode": "live", "provider": llm.provider(),
+            "draft": out["draft"],
+            "verdict": {**verdict, "questions": questions},
+            # Said plainly, because it changes what the badges mean.
+            "downgraded": out["downgraded"]}
 
 
 @app.post("/solutions/validate")

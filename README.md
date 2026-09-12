@@ -75,18 +75,41 @@ without it the map renders via MapLibre on OpenStreetMap tiles.
 
 ### Add a solution (Beta) — optional
 
-The Adjust panel has a Beta side door that researches a proposed measure with
-Gemini and structures it into typed fields, then runs it through a
-deterministic gate that decides whether this engine can honestly represent
-that physics. Only a draft that clears the gate, and that a person confirms,
-reaches the optimiser — every placement and impact number in the result is
-still the engine's.
+The Adjust panel has a Beta side door. A language model drafts a proposed
+measure into typed fields and asks for what it could not fill in; a
+deterministic gate in `api/solutions.py` then decides whether this engine can
+honestly represent that physics. Only a draft that clears the gate, and that
+a person confirms, reaches the optimiser — every placement and impact number
+in the result is still the engine's.
 
-To enable live research, copy `.env.example` to `.env`, put a Google AI Studio
-key in `GEMINI_API_KEY`, and export it before `make api`. **It is a
-server-side secret**: it is read by `api/gemini.py` and must never be given a
-`NEXT_PUBLIC_` prefix, because anything so prefixed is compiled into the
-browser bundle.
+Any OpenAI-compatible chat endpoint works. To enable it:
+
+```bash
+cp .env.example .env          # then fill in the three IFM_ values
+set -a; . ./.env; set +a      # export them into this shell
+make api
+```
+
+```
+IFM_BASE_URL=https://…        # the provider's /v1 base URL
+IFM_API_KEY=…                 # server-side secret
+IFM_MODEL=k2-horizon
+```
+
+**These are server-side secrets.** They are read by `api/llm.py` and must
+never be given a `NEXT_PUBLIC_` prefix or put in `web/.env.local`, because
+anything so prefixed is compiled into the browser bundle and is visible to
+everyone who opens the page. `.env` is gitignored; `.env.example` is the only
+one committed, and it is empty.
+
+No `pip install` is needed — `api/llm.py` speaks the OpenAI wire format over
+stdlib HTTP, so a machine that cannot install packages can still run this.
+
+**On grounding.** A plain chat completion has no retrieval tool, so the model
+answers from its weights and cannot show you where a figure came from. Every
+claim it marks `sourced` is therefore downgraded to `user_assumption`
+server-side, before the panel renders it, and the panel says when that
+happened. A recalled number is a suggestion, not a citation.
 
 Without a key nothing breaks. The panel returns cached example drafts that
 still demonstrate the whole gate — one measure that can be simulated and

@@ -26,13 +26,22 @@ interface Draft {
   openQuestions?: string[];
 }
 
+interface Provider {
+  configured: boolean;
+  base_url: string;
+  model: string;
+  /** True only if the provider can retrieve and cite live sources. */
+  grounded: boolean;
+}
+
 interface ChatReply {
   mode: "live" | "cached";
   reason?: string;
+  provider?: Provider;
   draft?: Draft;
-  research?: string;
-  sources?: { url: string; title: string }[];
   verdict?: Verdict;
+  /** Claims the model called "sourced" that were downgraded server-side. */
+  downgraded?: string[];
   examples?: { draft: Draft; verdict: Verdict }[];
 }
 
@@ -60,12 +69,16 @@ const STATUS_COPY: Record<string, { label: string; cls: string }> = {
 /**
  * Add New Solution (Beta).
  *
- * The point of this panel is the refusals. A language model researches a
- * proposal and structures it into typed fields; a deterministic gate then
- * decides whether this engine can honestly represent that physics, and says
- * exactly which evidence is missing when it cannot. Only a draft that clears
- * the gate reaches the optimiser, and every placement and impact number in
- * the result is the engine's, not the model's.
+ * The point of this panel is the refusals. A language model drafts a proposed
+ * measure into typed fields; a deterministic gate then decides whether this
+ * engine can honestly represent that physics, and says exactly which evidence
+ * is missing when it cannot. Only a draft that clears the gate, and that a
+ * person confirms, reaches the optimiser - and every placement and impact
+ * number in the result is the engine's, not the model's.
+ *
+ * The provider has no retrieval tool, so any figure the model calls "sourced"
+ * is downgraded to an assumption before it is shown. That downgrade happens
+ * on the server, and this panel says when it happened.
  *
  * It degrades on purpose: with no key or no network it returns cached example
  * drafts, so the core Crash -> Adjust -> Re-test loop is never at risk.
@@ -76,6 +89,7 @@ export default function SolutionLab({ sel, onClose }: {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [reply, setReply] = useState<ChatReply | null>(null);
+  const [provider, setProvider] = useState<Provider | null>(null);
   const [sim, setSim] = useState<SimResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -88,10 +102,16 @@ export default function SolutionLab({ sel, onClose }: {
   useEffect(() => {
     fetch(`${API}/solutions/mechanisms`)
       .then((r) => r.json())
-      .then((d) => setReply({ mode: "cached", reason: d.configured
-        ? "Describe a measure to research it."
-        : "Gemini is not configured here — these are the cached examples.",
-      examples: d.examples }))
+      .then((d) => {
+        setProvider(d.provider ?? null);
+        setReply({
+          mode: "cached",
+          reason: d.configured
+            ? "Describe a measure to draft it, or start from an example below."
+            : "No model is configured here — these are the cached examples.",
+          examples: d.examples,
+        });
+      })
       .catch(() => setError("The engine is not reachable, so Beta is offline."));
   }, []);
 
@@ -103,7 +123,9 @@ export default function SolutionLab({ sel, onClose }: {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ text }),
       });
-      setReply(await r.json());
+      const d: ChatReply = await r.json();
+      if (d.provider) setProvider(d.provider);
+      setReply(d);
     } catch {
       setError("Research is unavailable; the cached examples still work.");
     } finally { setBusy(false); }
@@ -149,12 +171,27 @@ export default function SolutionLab({ sel, onClose }: {
         <div className="space-y-4 px-6 py-5 text-[13px] leading-relaxed">
           <p className="rounded-xl border-l-4 border-violet-400 bg-violet-50 p-3
             text-violet-900/85">
-            Gemini searches for published evidence and structures it into typed
-            fields. It never invents an effect, picks a location or commits a
-            cost. A deterministic gate then decides whether this engine can
-            honestly represent that physics — and the refusals below are the
-            point, not a failure.
+            A language model drafts your measure into typed fields and asks for
+            what it could not fill in. It never invents an effect, picks a
+            location or commits a cost. A deterministic gate then decides
+            whether this engine can honestly represent that physics — and the
+            refusals below are the point, not a failure.
           </p>
+
+          {provider && (
+            <p className="text-[11.5px] leading-snug text-slate-500">
+              {provider.configured
+                ? <>Drafting with <b className="font-semibold text-slate-700">
+                  {provider.model}</b>. </>
+                : "No model configured. "}
+              {!provider.grounded && (
+                <>This provider has no retrieval tool, so it answers from its
+                  weights. Any figure it calls <i>sourced</i> is downgraded to
+                  an assumption before you see it — a recalled number is a
+                  suggestion, not a citation.</>
+              )}
+            </p>
+          )}
 
           <div>
             <label className="block text-[12px] uppercase tracking-wider
@@ -168,7 +205,7 @@ export default function SolutionLab({ sel, onClose }: {
               className="mt-2 rounded-lg bg-violet-700 px-4 py-2 text-[13px]
                 font-bold uppercase tracking-wide text-white
                 disabled:bg-slate-300">
-              {busy ? "Researching…" : "Research it"}
+              {busy ? "Drafting…" : "Draft it"}
             </button>
           </div>
 
@@ -181,21 +218,13 @@ export default function SolutionLab({ sel, onClose }: {
             </p>
           )}
 
-          {reply?.sources?.length ? (
-            <div>
-              <h3 className="text-[12px] uppercase tracking-wider text-slate-500">
-                Retrieved sources
-              </h3>
-              <ul className="mt-1 space-y-0.5">
-                {reply.sources.map((s) => (
-                  <li key={s.url}>
-                    <a href={s.url} target="_blank" rel="noreferrer"
-                      className="text-[12px] text-sky-700 underline
-                        decoration-dotted underline-offset-2">{s.title}</a>
-                  </li>
-                ))}
-              </ul>
-            </div>
+          {reply?.downgraded?.length ? (
+            <p className="rounded-lg bg-amber-50 p-2 text-[12px] text-amber-900">
+              The model claimed a source for{" "}
+              <b>{reply.downgraded.join(", ")}</b>, but nothing was retrieved
+              to check it against. Shown as an assumption for you to confirm
+              or replace.
+            </p>
           ) : null}
 
           {cards.map(({ draft, verdict }) => {

@@ -131,8 +131,8 @@ export default function AdjustModal({
             </span>
           </span>
           <span className="block text-[11.5px] leading-snug text-violet-900/70">
-            Research a measure with Gemini, then let the engine decide whether
-            it can honestly be simulated.
+            Describe a measure, let a language model draft it, then let the
+            engine decide whether it can honestly be simulated.
           </span>
         </button>
 
