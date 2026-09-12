@@ -39,21 +39,106 @@ async function loadRenderer(): Promise<GLNamespace> {
 
 /**
  * Thermal colour ramp, keyed to ABSOLUTE UTCI, not to a percentile of the
- * current run. The stress classes are published, so a quiet scenario must
- * look quiet rather than renormalising itself back to red. Red begins at
- * 38 C, the "Very Strong Heat Stress" threshold.
+ * current run. The stress classes are published, so a quiet scenario looks
+ * quiet rather than renormalising itself back to red.
+ *
+ * Continuous, deliberately. An earlier version stepped hard at 38 C, which
+ * made cooling from 37.9 to 34 invisible while cooling from 38.1 to 37.9
+ * looked dramatic - a false cliff. 38 C is still the published entry to Very
+ * Strong Heat Stress; it is marked on the legend rather than drawn as a wall.
  */
 const UTCI_RAMP: [number, string][] = [
-  [20, "#9fb4c4"],     // no thermal stress - deliberately muted
-  [26, "#b7c3bd"],     // moderate
-  [32, "#e2d3a4"],     // strong
-  [37.99, "#efb183"],  // still below the threshold
-  [38, "#d7301f"],     // VERY STRONG - a hard step, not a gradient
-  [46, "#7f0000"],     // extreme
+  [22, "#8fc7a4"],   // comfortable
+  [26, "#bfe0a8"],   // Moderate begins
+  [30, "#f2e394"],
+  [32, "#f7d070"],   // Strong begins
+  [35, "#f3944a"],
+  [38, "#e8562a"],   // Very Strong begins - marked, not a cliff
+  [42, "#c81e1e"],
+  [46, "#7f0000"],   // Extreme
 ];
 
 /** Basemap. Without a Mapbox token we fall back to open raster tiles, so a
  *  missing or dead token degrades the styling and nothing else. */
+/**
+ * Map sprites, drawn once at runtime.
+ *
+ * Mapbox cannot render operating-system emoji in a text-field, and the spec
+ * asks for bundled sprites anyway so the icons look identical on whichever
+ * machine drives the demo. Drawing them into a canvas keeps them dependency
+ * free and deterministic.
+ */
+function makeSprite(draw: (c: CanvasRenderingContext2D, s: number) => void,
+  size = 64): ImageData | null {
+  const cv = document.createElement("canvas");
+  cv.width = cv.height = size;
+  const c = cv.getContext("2d");
+  if (!c) return null;
+  draw(c, size);
+  return c.getImageData(0, 0, size, size);
+}
+
+function registerSprites(m: GLMap) {
+  const add = (id: string, img: ImageData | null) => {
+    if (img && !m.hasImage(id)) m.addImage(id, img, { pixelRatio: 2 });
+  };
+
+  add("pb-tree", makeSprite((c, s) => {
+    const k = s / 64;
+    c.fillStyle = "#6b4423";
+    c.fillRect(s / 2 - 3 * k, s * 0.6, 6 * k, s * 0.3);
+    for (const [dx, dy, r, col] of [
+      [0, -6, 17, "#2f8f4e"], [-9, 2, 13, "#3da35d"], [9, 2, 13, "#3da35d"],
+      [0, 6, 12, "#57b86f"],
+    ] as [number, number, number, string][]) {
+      c.beginPath();
+      c.arc(s / 2 + dx * k, s * 0.42 + dy * k, r * k, 0, Math.PI * 2);
+      c.fillStyle = col; c.fill();
+    }
+  }), );
+
+  add("pb-shelter", makeSprite((c, s) => {
+    const k = s / 64;
+    c.strokeStyle = "#0f766e"; c.lineWidth = 4 * k;
+    c.beginPath();
+    c.moveTo(s * 0.16, s * 0.86); c.lineTo(s * 0.16, s * 0.48);
+    c.moveTo(s * 0.84, s * 0.86); c.lineTo(s * 0.84, s * 0.48);
+    c.stroke();
+    c.beginPath();
+    c.moveTo(s * 0.08, s * 0.5); c.lineTo(s / 2, s * 0.16);
+    c.lineTo(s * 0.92, s * 0.5); c.closePath();
+    c.fillStyle = "#14b8a6"; c.fill();
+    c.strokeStyle = "#0f766e"; c.lineWidth = 3 * k; c.stroke();
+  }));
+
+  // One walker per UTCI band, so colour comes from the sprite rather than
+  // from tinting a glyph the renderer will not recolour.
+  for (const [id, col] of [
+    ["pb-walk-neutral", "#7c8798"], ["pb-walk-cool", "#4aa96c"],
+    ["pb-walk-warm", "#f0a13c"], ["pb-walk-hot", "#e8562a"],
+    ["pb-walk-severe", "#c81e1e"],
+  ] as [string, string][]) {
+    add(id, makeSprite((c, s) => {
+      const k = s / 64;
+      c.strokeStyle = "#ffffff"; c.lineWidth = 9 * k; c.lineCap = "round";
+      const body = () => {
+        c.beginPath();
+        c.arc(s / 2, s * 0.22, 7 * k, 0, Math.PI * 2);
+        c.moveTo(s / 2, s * 0.32); c.lineTo(s / 2, s * 0.6);
+        c.moveTo(s / 2, s * 0.6); c.lineTo(s * 0.34, s * 0.86);
+        c.moveTo(s / 2, s * 0.6); c.lineTo(s * 0.68, s * 0.84);
+        c.moveTo(s / 2, s * 0.4); c.lineTo(s * 0.3, s * 0.52);
+        c.moveTo(s / 2, s * 0.4); c.lineTo(s * 0.72, s * 0.46);
+      };
+      body(); c.stroke();
+      c.strokeStyle = col; c.lineWidth = 5.5 * k;
+      body(); c.stroke();
+      c.fillStyle = col;
+      c.beginPath(); c.arc(s / 2, s * 0.22, 6 * k, 0, Math.PI * 2); c.fill();
+    }));
+  }
+}
+
 function style(): any {
   if (TOKEN) return "mapbox://styles/mapbox/light-v11";
   return {
@@ -130,6 +215,7 @@ export default function MapView({
       m.addControl(new GL.NavigationControl({ showCompass: false }), "bottom-right");
 
       m.on("load", async () => {
+        registerSprites(m);
         const [segments, buildings, trees, trips] = await Promise.all([
           fetch("/data/segments.geojson").then((r) => r.json()),
           fetch("/data/buildings.geojson").then((r) => r.json()),
@@ -269,18 +355,23 @@ export default function MapView({
             "circle-blur": 0.6,
           },
         });
+        // A walking figure, not a dot: the layer is about people, and a
+        // glyph says so without a legend entry.
         m.addLayer({
-          id: "agent-dot", type: "circle", source: "agents",
-          layout: { visibility: "none" },
-          paint: {
-            "circle-radius": ["interpolate", ["linear"], ["zoom"], 13, 3, 17, 6],
-            "circle-color": [
+          id: "agent-dot", type: "symbol", source: "agents",
+          layout: {
+            visibility: "none",
+            "icon-image": [
               "case",
-              ["<", ["get", "utci"], 0], "#64748b",   // neutral, pre-Crash
-              ["interpolate", ["linear"], ["get", "utci"],
-                ...UTCI_RAMP.flatMap(([stop, colour]) => [stop, colour])],
+              ["<", ["get", "utci"], 0], "pb-walk-neutral",
+              ["<", ["get", "utci"], 30], "pb-walk-cool",
+              ["<", ["get", "utci"], 34], "pb-walk-warm",
+              ["<", ["get", "utci"], 38], "pb-walk-hot",
+              "pb-walk-severe",
             ],
-            "circle-stroke-color": "#ffffff", "circle-stroke-width": 1.2,
+            "icon-size": ["interpolate", ["linear"], ["zoom"], 12, 0.3, 15, 0.5, 17, 0.72],
+            "icon-allow-overlap": true,
+            "icon-ignore-placement": true,
           },
         });
 
@@ -295,35 +386,37 @@ export default function MapView({
           id: "shade-footprints", type: "fill", source: "shade-footprints",
           paint: {
             "fill-color": ["match", ["get", "kind"],
-              "shaded_shelter", "#0f766e", "#15803d"],
-            "fill-opacity": ["*", 0.28, ["coalesce", ["get", "bloom"], 0]],
+              "shaded_shelter", "#14b8a6", "#34d399"],
+            "fill-opacity": ["*", 0.34, ["coalesce", ["get", "bloom"], 0]],
+          },
+        });
+        m.addLayer({
+          id: "shade-glow", type: "line", source: "shade-footprints",
+          paint: {
+            "line-color": ["match", ["get", "kind"],
+              "shaded_shelter", "#0d9488", "#22c55e"],
+            "line-width": ["interpolate", ["linear"], ["zoom"], 13, 6, 17, 22],
+            "line-opacity": ["*", 0.22, ["coalesce", ["get", "bloom"], 0]],
+            "line-blur": 12,
           },
         });
         m.addSource("placed", {
           type: "geojson", data: { type: "FeatureCollection", features: [] },
         });
         m.addLayer({
-          id: "placed", type: "circle", source: "placed",
-          paint: {
+          id: "placed", type: "symbol", source: "placed",
+          layout: {
+            "icon-image": ["match", ["get", "kind"],
+              "shaded_shelter", "pb-shelter", "pb-tree"],
             // "zoom" must be the top-level input to interpolate, so the pop
             // scale multiplies inside each stop rather than wrapping it.
-            "circle-radius": ["interpolate", ["linear"], ["zoom"],
-              13, ["*", 5, ["coalesce", ["get", "pop"], 1]],
-              17, ["*", 11, ["coalesce", ["get", "pop"], 1]]],
-            "circle-color": ["match", ["get", "kind"],
-              "shaded_shelter", "#0f766e", "#15803d"],
-            "circle-stroke-color": "#ffffff",
-            "circle-stroke-width": 2,
+            "icon-size": ["interpolate", ["linear"], ["zoom"],
+              12, ["*", 0.34, ["coalesce", ["get", "pop"], 1]],
+              15, ["*", 0.58, ["coalesce", ["get", "pop"], 1]],
+              17, ["*", 0.92, ["coalesce", ["get", "pop"], 1]]],
+            "icon-allow-overlap": true,
+            "icon-ignore-placement": true,
           },
-        });
-        m.addLayer({
-          id: "placed-glyph", type: "symbol", source: "placed",
-          layout: {
-            "text-field": ["match", ["get", "kind"], "shaded_shelter", "\u26E9", "\u2663"],
-            "text-size": ["interpolate", ["linear"], ["zoom"], 13, 8, 17, 14],
-            "text-allow-overlap": true,
-          },
-          paint: { "text-color": "#ffffff" },
         });
 
         // feature-state is not permitted in a layer filter, only in paint,

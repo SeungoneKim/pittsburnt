@@ -266,6 +266,23 @@ class Engine:
                   "shade_relief_c": cond["shade_relief_c"]},
         )
 
+    def baseline_state(self, hour: int, persona: str) -> dict:
+        """The observed hot-day baseline at the same hour, for comparison.
+
+        The spec forbids reading 2026 -> adjusted future as the effect of an
+        intervention: that difference contains the warming too. So the
+        baseline is carried alongside as context, and the intervention effect
+        is only ever future-before -> future-after.
+        """
+        r = self.crash_test("baseline", hour, persona)
+        return {
+            "label": self.scenarios["scenarios"]["baseline"]["label"],
+            "air_temp_c": r.meta["air_temp_c"],
+            "utci_sun_c": r.utci_sun_c,
+            "heat_load": round(r.heat_load_total, 2),
+            "severe": round(r.severe_total, 2),
+        }
+
     def day_profile(self, scenario: str, persona: str) -> list[dict]:
         """Severe minutes and peak UTCI across the whole day.
 

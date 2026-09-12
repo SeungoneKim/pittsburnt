@@ -101,9 +101,19 @@ export interface DayHour {
   headroom_c: number;
 }
 
+export interface BaselineState {
+  label: string;
+  air_temp_c: number;
+  utci_sun_c: number;
+  heat_load: number;
+  severe: number;
+}
+
 export interface CrashResult {
   input_hash: string;
   day_profile: DayHour[];
+  /** The observed hot-day baseline at the same hour, for context. */
+  baseline_state: BaselineState;
   snapshot_id: string;
   status: string;
   severe_total: number;          // walking + waiting, at or above UTCI 38 C

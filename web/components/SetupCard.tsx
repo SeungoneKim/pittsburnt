@@ -38,65 +38,68 @@ export default function SetupCard({
       border border-slate-200/80 bg-white/95 shadow-xl shadow-slate-900/5
       backdrop-blur">
       <header className="px-5 pb-3 pt-4">
-        <h1 className="text-[22px] font-bold leading-none tracking-tight">
+        <h1 className="text-[24px] font-extrabold leading-none tracking-tight">
           MEET <span className="text-red-600">PITTSBURNT</span>
         </h1>
-        <p className="mt-1 text-[12px] uppercase tracking-[0.14em] text-blue-700">
+        <p className="mt-1 text-[12px] uppercase tracking-[0.16em] text-slate-400">
           A crash test for cities
         </p>
       </header>
 
       <div className="max-h-[calc(100dvh-300px)] overflow-y-auto px-5 pb-5">
-        <Section n={1} title="Time" help="time" onHelp={onOpenSources}>
-          <Pills
+        <Section icon="⏱" title="Time" help="time" onHelp={onOpenSources}>
+          <Drop
             value={sel.hour}
+            placeholder="Choose a time"
             options={meta.hours.map((h) => ({ key: h, label: HOUR_LABEL[h] }))}
             onSelect={(hour) => onChange({ hour })}
             disabled={locked}
           />
         </Section>
 
-        <Section n={2} title="Who is walking" help="personas" onHelp={onOpenSources}>
-          <Pills
+        <Section icon="👥" title="Who" help="personas" onHelp={onOpenSources}>
+          <Drop
             value={sel.persona}
+            placeholder="Choose a population"
             options={meta.personas.map((p) => ({ key: p.key, label: p.label }))}
             onSelect={(persona) => onChange({ persona })}
             disabled={locked}
           />
         </Section>
 
-        <Section n={3} title="Climate scenario" help="climate" onHelp={onOpenSources}>
-          <Pills
+        <Section icon="📈" title="Future scenario" help="climate" onHelp={onOpenSources}>
+          <Drop
             value={sel.scenario}
+            placeholder="Choose a scenario"
             options={meta.scenarios.map((s) => ({ key: s.key, label: s.label }))}
             onSelect={(scenario) => onChange({ scenario })}
             disabled={locked}
           />
         </Section>
 
-        <Section n={4} title="Existing protection" help="protection" onHelp={onOpenSources}>
-          <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
+        <Section icon="🍃" title="Existing protection" help="protection"
+          onHelp={onOpenSources}>
+          <div className="flex flex-wrap gap-1.5">
             {([
-              ["canopy", "Existing Canopy Coverage"],
-              ["trees", "Existing Tree Inventory"],
-              ["shadow", "Building shade"],
-              ["buildings", "Buildings"],
-              ["agents", "Moving People"],
-              ["trips", "Walking routes"],
-            ] as const).map(([key, label]) => (
-              <label
+              ["trees", "Tree Inventory", "🌳"],
+              ["canopy", "Canopy Coverage", "🌲"],
+              ["shadow", "Building Shade", "🏢"],
+              ["agents", "Moving People", "🚶"],
+              ["trips", "Walking Routes", "🗺"],
+            ] as const).map(([key, label, icon]) => (
+              <button
                 key={key}
-                className="flex cursor-pointer items-center gap-2 text-[13px]
-                  leading-tight text-slate-700"
+                onClick={() => onLayers({ [key]: !layers[key] })}
+                aria-pressed={layers[key]}
+                className={`flex items-center gap-1.5 rounded-full border px-3
+                  py-1.5 text-[12.5px] transition ${
+                    layers[key]
+                      ? "border-emerald-300 bg-emerald-50 font-medium text-emerald-900"
+                      : "border-slate-200 bg-white text-slate-500 hover:border-slate-400"
+                  }`}
               >
-                <input
-                  type="checkbox"
-                  checked={layers[key]}
-                  onChange={(e) => onLayers({ [key]: e.target.checked })}
-                  className="h-4 w-4 shrink-0 accent-slate-900"
-                />
-                {label}
-              </label>
+                <span aria-hidden>{icon}</span>{label}
+              </button>
             ))}
           </div>
         </Section>
@@ -105,8 +108,8 @@ export default function SetupCard({
   );
 }
 
-function Section({ n, title, help, onHelp, children }: {
-  n: number; title: string; help: string;
+function Section({ icon, title, help, onHelp, children }: {
+  icon: string; title: string; help: string;
   onHelp: (k?: string) => void; children: React.ReactNode;
 }) {
   const [hover, setHover] = useState(false);
@@ -119,11 +122,9 @@ function Section({ n, title, help, onHelp, children }: {
       onBlur={() => setHover(false)}
     >
       <div className="mb-2 flex items-center gap-2">
-        <span className="grid h-5 w-5 place-items-center rounded-md bg-slate-900
-          text-[11px] font-semibold text-white">
-          {n}
-        </span>
-        <h2 className="text-[15px] font-semibold text-slate-900">{title}</h2>
+        <span aria-hidden className="text-[14px]">{icon}</span>
+        <h2 className="text-[12px] font-semibold uppercase tracking-[0.1em]
+          text-slate-500">{title}</h2>
         {/* Help appears on hover or focus, so it is discoverable without
             occupying the resting surface. */}
         <button
@@ -141,32 +142,49 @@ function Section({ n, title, help, onHelp, children }: {
   );
 }
 
-function Pills<T extends string | number>({ value, options, onSelect, disabled }: {
+/**
+ * A large native select. Native is deliberate: it is keyboard- and
+ * screen-reader-correct for free, and at this size it reads from across a
+ * room without a custom listbox to maintain.
+ */
+function Drop<T extends string | number>({
+  value, options, onSelect, disabled, placeholder,
+}: {
   value: T | null;
   options: { key: T; label: string }[];
   onSelect: (v: T) => void;
   disabled: boolean;
+  placeholder: string;
 }) {
+  const numeric = typeof options[0]?.key === "number";
   return (
-    <div className="flex flex-wrap gap-1.5">
-      {options.map((o) => {
-        const on = o.key === value;
-        return (
-          <button
-            key={String(o.key)}
-            disabled={disabled}
-            onClick={() => onSelect(o.key)}
-            className={`rounded-lg border px-3 py-2 text-[13px] transition
-              disabled:cursor-not-allowed disabled:opacity-50 ${
-                on
-                  ? "border-slate-900 bg-slate-900 font-semibold text-white"
-                  : "border-slate-300 bg-white text-slate-700 hover:border-slate-500 hover:bg-slate-50"
-              }`}
-          >
-            {o.label}
-          </button>
-        );
-      })}
+    <div className="relative">
+      <select
+        disabled={disabled}
+        value={value === null ? "" : String(value)}
+        onChange={(e) => {
+          const v = e.target.value;
+          if (v === "") return;
+          onSelect((numeric ? Number(v) : v) as T);
+        }}
+        className={`w-full appearance-none rounded-xl border px-3.5 py-3
+          pr-10 text-[17px] font-semibold transition
+          disabled:cursor-not-allowed disabled:opacity-60 ${
+            value === null
+              ? "border-slate-200 bg-slate-50 text-slate-400"
+              : "border-slate-300 bg-white text-slate-900"
+          }`}
+      >
+        <option value="" disabled>{placeholder}</option>
+        {options.map((o) => (
+          <option key={String(o.key)} value={String(o.key)}>{o.label}</option>
+        ))}
+      </select>
+      <span aria-hidden
+        className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2
+          text-[13px] text-slate-400">
+        ▾
+      </span>
     </div>
   );
 }

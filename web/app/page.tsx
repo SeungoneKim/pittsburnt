@@ -269,7 +269,8 @@ export default function Page() {
           />
         </div>
 
-        <div className="pointer-events-auto absolute bottom-6 left-4 flex gap-2
+        {/* Clear of the dev overlay badge that sits in the bottom-left corner. */}
+        <div className="pointer-events-auto absolute bottom-6 left-16 flex gap-2
           max-[1400px]:bottom-4">
           <button
             onClick={() => setSources("provenance")}
@@ -292,13 +293,23 @@ export default function Page() {
           <div className="pointer-events-none absolute bottom-24 right-4 rounded-xl
             border border-slate-200 bg-white/95 px-3 py-2 shadow backdrop-blur">
             <div className="flex items-center gap-2">
-              <div className="h-2 w-36 rounded-full"
-                style={{ background: "linear-gradient(90deg,#9fb4c4,#b7c3bd 30%,#e2d3a4 60%,#efb183 74%,#d7301f 74.1%,#7f0000)" }} />
+              <div className="relative h-2.5 w-44 rounded-full"
+                style={{
+                  background: "linear-gradient(90deg,#8fc7a4,#bfe0a8 17%,"
+                    + "#f2e394 33%,#f7d070 42%,#f3944a 54%,#e8562a 67%,"
+                    + "#c81e1e 83%,#7f0000)",
+                }}>
+                {/* 38 C marked, not walled off. */}
+                <span className="absolute -top-0.5 h-3.5 w-[2px] bg-slate-900"
+                  style={{ left: "66.7%" }} />
+              </div>
             </div>
-            <div className="mt-0.5 flex w-36 justify-between text-[10px] tabular-nums text-slate-500">
+            <div className="mt-1 flex w-44 justify-between text-[10px]
+              tabular-nums text-slate-500">
               <span>26</span><span>32</span>
-              <span className="font-semibold text-red-700">38</span><span>46</span>
+              <span className="font-semibold text-slate-900">38</span><span>46</span>
             </div>
+            <div className="text-[10px] text-slate-500">UTCI (°C)</div>
           </div>
         )}
 

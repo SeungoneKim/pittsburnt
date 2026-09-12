@@ -186,6 +186,7 @@ def crash_test(req: CrashTestRequest) -> dict:
         "planning_weight": res.planning_weight,
         "severe_threshold_utci_c": SEVERE_UTCI_C,
         "day_profile": engine.day_profile(req.scenario, req.persona),
+        "baseline_state": engine.baseline_state(req.hour, req.persona),
         **_segments_payload(res, 20),
         "disclaimer": DISCLAIMER,
     }
