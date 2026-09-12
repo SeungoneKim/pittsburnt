@@ -368,20 +368,33 @@ def solution_chat(req: SolutionChatRequest) -> dict:
     except Exception as exc:                  # network, quota, malformed reply
         return {**cached, "reason": f"the model is unavailable: {exc}"}
 
-    verdict = _verdict(out["draft"])
-    # If the gate refused, let the model ask for exactly what is missing.
-    # This is the one place it is allowed to be creative, because a question
-    # cannot become a number without a person answering it.
-    questions = verdict["questions"]
-    if not verdict["can_simulate"] and verdict["missing"]:
-        questions = (llm.clarify(req.text, verdict["missing"],
-                                 " ".join(verdict["reasons"]))
-                     or questions)
     return {"mode": "live", "provider": llm.provider(),
             "draft": out["draft"],
-            "verdict": {**verdict, "questions": questions},
+            "verdict": _verdict(out["draft"]),
             # Said plainly, because it changes what the badges mean.
             "downgraded": out["downgraded"]}
+
+
+class ClarifyRequest(BaseModel):
+    text: str = Field(..., min_length=3, max_length=800)
+    draft: dict
+
+
+@app.post("/solutions/clarify")
+def solution_clarify(req: ClarifyRequest) -> dict:
+    """Better questions for a refused draft. Optional, and asked separately.
+
+    This is the one place the model is allowed to be creative, because a
+    question cannot become a number without a person answering it. It is its
+    own endpoint because it is the slow half: folding it into the draft
+    request took a 7 s answer to 39 s, and it has a deterministic fallback,
+    so the panel renders the gate's own questions first and improves them
+    afterwards if this returns in time.
+    """
+    v = solutions.validate(req.draft)
+    if v.can_simulate or not v.missing or not llm.configured():
+        return {"questions": []}
+    return {"questions": llm.clarify(req.text, v.missing, " ".join(v.reasons))}
 
 
 @app.post("/solutions/validate")

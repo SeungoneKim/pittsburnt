@@ -111,6 +111,24 @@ claim it marks `sourced` is therefore downgraded to `user_assumption`
 server-side, before the panel renders it, and the panel says when that
 happened. A recalled number is a suggestion, not a citation.
 
+**Measured against `IFM/K2-Horizon-375B-A23B`**, which is a reasoning model,
+and two things follow from that:
+
+- Every call asks for `response_format: json_object`. The same prompt as
+  free-form text spent 4,494 completion tokens thinking and took 42 s;
+  in JSON mode it finished in 628 tokens and 6.8 s.
+- **No `max_tokens` is sent.** The cap is charged against reasoning tokens, so
+  the model spends the entire budget thinking and returns *empty* content with
+  `finish_reason: "length"` — measured identically at 900, 1,600 and 2,500.
+  Unbounded, it stops on its own.
+
+A draft takes roughly 8–20 s. The follow-up questions are a second call on
+its own endpoint, because folding them into the draft request took a 7 s
+answer to 39 s; the gate's own questions render immediately and the model's
+replace them when they arrive.
+
+`make gates-live` drives the whole panel against the configured model.
+
 Without a key nothing breaks. The panel returns cached example drafts that
 still demonstrate the whole gate — one measure that can be simulated and
 three that honestly cannot, each naming the evidence it is missing — and the

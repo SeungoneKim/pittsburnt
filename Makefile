@@ -7,7 +7,7 @@ export PYTHONPATH := pipeline:api
 .PHONY: help api web run \
         step1 step2 step3 step4 step5 step6 step7 step7b step8 pipeline \
         verify test-engine check-determinism inspect check clean-cache \
-        gates
+        gates gates-live
 
 help:
 	@echo "Run the demo"
@@ -21,6 +21,7 @@ help:
 	@echo "  make check-determinism - same seed reproduces the same trips"
 	@echo "  make inspect           - visual QA map of the pipeline geometry"
 	@echo "  make gates             - browser release gates (needs api + web up)"
+	@echo "  make gates-live        - Beta panel against the real model (needs a key)"
 	@echo ""
 	@echo "Rebuild the data (each step caches; run only what you need)"
 	@echo "  make step1  walk graph -> corridor-labelled segments"
@@ -75,3 +76,9 @@ clean-cache:
 gates:
 	node tests/release_gates.mjs
 	node tests/solution_lab_gate.mjs
+
+# The Beta panel driven against a real configured model. Separate from
+# `gates` on purpose: it needs a key and a network, and the core demo must
+# stay verifiable without either.
+gates-live:
+	node tests/live_model_gate.mjs

@@ -126,6 +126,25 @@ export default function SolutionLab({ sel, onClose }: {
       const d: ChatReply = await r.json();
       if (d.provider) setProvider(d.provider);
       setReply(d);
+      // Better questions arrive separately. The gate's own are already on
+      // screen by now; folding this into the draft request took a 7 s answer
+      // to 39 s, so it improves the panel rather than delaying it.
+      if (d.mode === "live" && d.draft && d.verdict && !d.verdict.can_simulate
+          && d.verdict.missing.length) {
+        const draft = d.draft;
+        fetch(`${API}/solutions/clarify`, {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ text, draft }),
+        })
+          .then((q) => q.json())
+          .then((q: { questions?: string[] }) => {
+            if (!q.questions?.length) return;
+            setReply((prev) => (prev?.draft === draft && prev.verdict
+              ? { ...prev, verdict: { ...prev.verdict, questions: q.questions! } }
+              : prev));
+          })
+          .catch(() => { /* the gate's questions stand */ });
+      }
     } catch {
       setError("Research is unavailable; the cached examples still work.");
     } finally { setBusy(false); }

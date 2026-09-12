@@ -29,7 +29,22 @@ import os
 import re
 import urllib.request
 
-TIMEOUT_S = 45
+# Two budgets, because the two calls have different stakes. The draft is the
+# feature and is worth waiting for; the follow-up questions are a nicety that
+# already has a deterministic fallback, so they get a short leash.
+TIMEOUT_S = 60
+CLARIFY_TIMEOUT_S = 25
+
+# This provider is a reasoning model, and that shapes both calls below.
+#
+# Asking for JSON is what makes it fast: the same prompt as free-form text
+# spent 4,494 completion tokens thinking and took 42 s, against 628 tokens
+# and 6.8 s with response_format json_object. So every call asks for JSON.
+#
+# Do NOT send max_tokens. The cap is charged against reasoning tokens, so the
+# model spends the entire budget thinking and returns EMPTY content with
+# finish_reason "length" - measured identically at 900, 1,600 and 2,500. An
+# unbounded request finishes on its own in 628.
 
 # Whether the configured provider can retrieve and cite live sources. No
 # OpenAI-compatible chat completion does this without a tool, so it is False
@@ -85,8 +100,9 @@ unless a study measured one - the engine computes those, not you."""
 
 QUESTION_PROMPT = """The proposal below could not be simulated. Write at most \
 three short, specific questions that would let a planner supply the missing \
-evidence. Ask for values, units and sources - never for opinions. One \
-question per line, no numbering, no preamble.
+evidence. Ask for values, units and sources - never for opinions.
+
+Return ONE JSON object and nothing else: {{"questions": [string, ...]}}
 
 Proposal: {text}
 Missing: {missing}
@@ -107,7 +123,8 @@ def provider() -> dict:
     }
 
 
-def _chat(messages: list[dict], json_mode: bool = False) -> str:
+def _chat(messages: list[dict], json_mode: bool = False,
+          timeout: float = TIMEOUT_S) -> str:
     base = (os.environ.get("IFM_BASE_URL") or "").rstrip("/")
     key = os.environ.get("IFM_API_KEY")
     model = os.environ.get("IFM_MODEL")
@@ -126,7 +143,7 @@ def _chat(messages: list[dict], json_mode: bool = False) -> str:
         headers={"content-type": "application/json",
                  "authorization": f"Bearer {key}"},
         method="POST")
-    with urllib.request.urlopen(req, timeout=TIMEOUT_S) as r:
+    with urllib.request.urlopen(req, timeout=timeout) as r:
         resp = json.loads(r.read())
     return (resp.get("choices") or [{}])[0].get("message", {}).get("content", "")
 
@@ -186,12 +203,31 @@ def draft_solution(text: str) -> dict:
 
 
 def clarify(text: str, missing: list[str], why: str) -> list[str]:
-    """Ask for the evidence the gate found missing. Optional, and best-effort."""
+    """Ask for the evidence the gate found missing.
+
+    Strictly optional, and deliberately on its own endpoint: the gate already
+    writes usable questions, so anything going wrong here - a timeout, a
+    refusal, a malformed reply - returns empty and the caller keeps the
+    deterministic ones. It must never be able to make the panel slow or
+    broken, which is exactly what it did when it shared the draft request.
+    """
     try:
         out = _chat([{"role": "user", "content": QUESTION_PROMPT.format(
             text=text[:400], missing=", ".join(missing) or "none",
-            why=why[:400])}])
+            why=why[:400])}], json_mode=True, timeout=CLARIFY_TIMEOUT_S)
+        qs = _json_object(out).get("questions")
     except Exception:
         return []
-    lines = [ln.strip(" -•\t") for ln in out.splitlines() if ln.strip()]
-    return lines[:3]
+    if not isinstance(qs, list):
+        return []
+    # Observed on this provider: it sometimes double-encodes, handing back the
+    # whole object again as the single question. Unwrap one level rather than
+    # showing a planner a JSON blob.
+    if len(qs) == 1 and isinstance(qs[0], str) and '"questions"' in qs[0]:
+        try:
+            inner = _json_object(qs[0]).get("questions")
+            if isinstance(inner, list):
+                qs = inner
+        except Exception:
+            pass
+    return [q.strip() for q in qs if isinstance(q, str) and q.strip()][:3]
