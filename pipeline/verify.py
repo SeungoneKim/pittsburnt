@@ -187,12 +187,52 @@ def verify_trees() -> None:
           f"radius median {t.crown_r_m.median():.1f} m")
 
 
+def verify_trips() -> None:
+    path = CACHE / "minutes.npz"
+    if not path.exists():
+        check("minutes.npz exists", False, "missing - run step05")
+        return
+    z = np.load(path, allow_pickle=True)
+    mins = z["minutes"]
+    seg = gpd.read_file(CACHE / "segments.geojson")
+    meta = json.loads((CACHE / "trips_meta.json").read_text())
+
+    check("minutes.npz exists", True,
+          f"{mins.shape[0]} segs x {mins.shape[1]} personas x {mins.shape[2]} hours")
+    check("minutes aligns with segments",
+          list(z["seg_ids"]) == seg["seg_id"].tolist())
+    check("minutes non-negative and finite",
+          bool((mins >= 0).all() and np.isfinite(mins).all()))
+    check("every persona generated trips",
+          all(p["trips"] > 0 for p in meta["personas"]),
+          " / ".join(f"{p['persona'][:4]}:{p['trips']}" for p in meta["personas"]))
+    touched = (mins.sum(axis=(1, 2)) > 0).mean()
+    check("trips reach a good share of the network", touched >= 0.4,
+          f"{touched*100:.1f}% of segments carry traffic")
+
+    # Slower personas must accumulate more minutes per metre walked, since
+    # that is the entire mechanism by which vulnerability enters the model.
+    by = {p["persona"]: p for p in meta["personas"]}
+    slow, fast = by["mobility_constrained"], by["workers"]
+    slow_rate = slow["total_minutes"] / max(slow["trips"] * slow["median_trip_m"], 1)
+    fast_rate = fast["total_minutes"] / max(fast["trips"] * fast["median_trip_m"], 1)
+    check("slower walkers accumulate more minutes per metre",
+          slow_rate > fast_rate,
+          f"{slow_rate*1000:.2f} vs {fast_rate*1000:.2f} min per km")
+    check("personas differ in trip length",
+          by["workers"]["median_trip_m"] > by["mobility_constrained"]["median_trip_m"],
+          f"workers {by['workers']['median_trip_m']:.0f} m vs "
+          f"mobility {by['mobility_constrained']['median_trip_m']:.0f} m")
+    check("trip seed recorded", "seed" in meta, f"seed {meta.get('seed')}")
+
+
 def main() -> int:
     verify_segments()
     verify_edge_map()
     verify_buildings()
     verify_shadows()
     verify_trees()
+    verify_trips()
 
     width = max(len(n) for _, n, _ in results)
     n_fail = 0

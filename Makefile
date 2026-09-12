@@ -16,3 +16,11 @@ clean-cache:; rm -f data/cache/segments.geojson data/cache/edge_segments.json da
 step2:      ; $(PY) pipeline/step02_buildings.py --candidates
 step3:      ; $(PY) pipeline/step03_shadows.py
 step4:      ; $(PY) pipeline/step04_trees.py
+step5:      ; $(PY) pipeline/step05_trips.py
+
+# The before/after comparison is only meaningful if the same seed reproduces
+# the same people; this proves it rather than asserting it.
+check-determinism:
+	@$(PY) -c "import numpy,hashlib;print('before:',hashlib.sha256(numpy.load('data/cache/minutes.npz',allow_pickle=True)['minutes'].tobytes()).hexdigest()[:16])"
+	@$(PY) pipeline/step05_trips.py > /dev/null
+	@$(PY) -c "import numpy,hashlib;print(' after:',hashlib.sha256(numpy.load('data/cache/minutes.npz',allow_pickle=True)['minutes'].tobytes()).hexdigest()[:16])"

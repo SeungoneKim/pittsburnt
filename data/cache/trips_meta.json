@@ -1,0 +1,51 @@
+{
+  "seed": 20260911,
+  "n_trips_requested": 300,
+  "personas": [
+    {
+      "persona": "all",
+      "label": "All pedestrians",
+      "trips": 300,
+      "median_trip_m": 1169.0990373894558,
+      "total_minutes": 4473.8701171875,
+      "speed_mps": 1.35,
+      "planning_weight": 1.0
+    },
+    {
+      "persona": "students",
+      "label": "Students",
+      "trips": 300,
+      "median_trip_m": 1288.3862763248817,
+      "total_minutes": 4503.49658203125,
+      "speed_mps": 1.45,
+      "planning_weight": 1.0
+    },
+    {
+      "persona": "older_adults",
+      "label": "Older adults",
+      "trips": 296,
+      "median_trip_m": 782.8391561902088,
+      "total_minutes": 3915.512939453125,
+      "speed_mps": 1.05,
+      "planning_weight": 1.4
+    },
+    {
+      "persona": "workers",
+      "label": "Workers",
+      "trips": 299,
+      "median_trip_m": 1461.4685252028312,
+      "total_minutes": 5233.06396484375,
+      "speed_mps": 1.4,
+      "planning_weight": 1.0
+    },
+    {
+      "persona": "mobility_constrained",
+      "label": "Mobility-constrained",
+      "trips": 298,
+      "median_trip_m": 610.8629559865175,
+      "total_minutes": 4013.27099609375,
+      "speed_mps": 0.8,
+      "planning_weight": 1.6
+    }
+  ]
+}
