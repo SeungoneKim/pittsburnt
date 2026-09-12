@@ -29,3 +29,4 @@ export PYTHONPATH := pipeline:api
 api:        ; $(PY) -m uvicorn main:app --app-dir api --reload --port 8000
 test-engine:; @$(PY) api/test_engine.py
 step8:      ; $(PY) pipeline/step08_export_web.py
+step7:      ; $(PY) pipeline/step07_transit.py

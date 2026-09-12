@@ -86,13 +86,38 @@ export default function AssumptionsPanel({ meta }: { meta: Meta }) {
             {Object.entries(meta.interventions).map(([k, v]) => (
               <div key={k}>
                 {v.label}: ${v.cost_usd.toLocaleString()} each, shades about{" "}
-                {v.shade_m} m of footway.
+                {v.shade_m} m of footway
+                {v.site_constrained && meta.shelter_sites
+                  ? `, and can only be placed at one of the ${meta.shelter_sites.total_sites} real unsheltered bus stops`
+                  : ""}
+                .
               </div>
             ))}
             <span className="text-slate-500">
               Costs are planning-order-of-magnitude figures for a prototype, not
-              procurement prices.
+              procurement prices. No per-shelter figure is published for
+              Pittsburgh DOMI&apos;s Transit Stop Improvement Program; $15,000
+              sits inside the $9k–$30k industry range.
             </span>
+          </Section>
+
+          <Section title="What this model does not count">
+            <b className="text-amber-800">
+              Exposure is scored for people walking, not people waiting.
+            </b>{" "}
+            A bus shelter&apos;s main benefit is protecting riders standing
+            still at a stop, and none of that time is in this model — so
+            shelters are systematically undervalued here, and trees win on
+            exposure-per-dollar by a wide margin. Treat the comparison between
+            a tree and a shelter as incomplete, not as a verdict. Choosing a
+            single intervention type above lets you see what a
+            shelters-only or structures-only budget would buy.
+            <br />
+            <br />
+            Cooling centres are not offered as an intervention. They are
+            activated episodically and act as somewhere to go rather than as
+            permanent shade, so modelling them as shade would misstate what
+            they do.
           </Section>
         </div>
       )}

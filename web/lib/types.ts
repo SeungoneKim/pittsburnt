@@ -19,6 +19,14 @@ export interface Intervention {
   label: string;
   cost_usd: number;
   shade_m: number;
+  site_constrained: boolean;
+}
+
+export interface CanopyMeta {
+  bounds: [number, number][];
+  cover_pct: number;
+  source: string;
+  vintage: string;
 }
 
 export interface Meta {
@@ -30,6 +38,9 @@ export interface Meta {
   personas: Persona[];
   scenarios: Scenario[];
   interventions: Record<string, Intervention>;
+  variants: string[];
+  canopy: CanopyMeta | null;
+  shelter_sites: { total_sites: number; already_sheltered: number; note: string } | null;
   climate_method: Record<string, unknown>;
   canopy_source: string;
   canopy_vintage: string;
@@ -69,4 +80,6 @@ export interface Selection {
   hour: Hour;
   persona: string;
   budget: number;
+  /** Which intervention types the optimiser may spend on; "all" or one kind. */
+  variant: string;
 }

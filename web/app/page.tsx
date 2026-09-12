@@ -18,6 +18,7 @@ const DEFAULT: Selection = {
   hour: 15,
   persona: "older_adults",
   budget: 250000,
+  variant: "all",
 };
 
 export default function Page() {
@@ -29,7 +30,8 @@ export default function Page() {
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<SourceMode>("live");
   const [layers, setLayers] = useState({
-    shadow: false, trees: false, buildings: false, trips: false,
+    shadow: false, canopy: false, trees: false, stops: false,
+    buildings: false, trips: false,
   });
   const [corridors, setCorridors] = useState<Record<string, string | null>>({});
 
@@ -81,7 +83,8 @@ export default function Page() {
     setResult(null);
     setAdapted(null);
     setError(null);
-    setLayers({ shadow: false, trees: false, buildings: false, trips: false });
+    setLayers({ shadow: false, canopy: false, trees: false, stops: false,
+      buildings: false, trips: false });
   }, []);
 
   // Colour scale is pinned to the *baseline* run so ADAPT visibly cools the

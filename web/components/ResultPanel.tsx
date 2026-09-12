@@ -30,7 +30,7 @@ function Stat({ label, value, unit, tone = "default" }: {
 export default function ResultPanel({ meta, sel, result, adapted, hotspots }: Props) {
   if (!result) {
     return (
-      <div className="rounded-xl border border-slate-200 bg-white/95 p-4 shadow-lg backdrop-blur">
+      <div className="w-[330px] rounded-xl border border-slate-200 bg-white/95 p-4 shadow-lg backdrop-blur">
         <p className="text-xs leading-relaxed text-slate-600">
           Pick a time, a population and a climate scenario, then{" "}
           <b>run the crash test</b> to see where modelled pedestrian heat

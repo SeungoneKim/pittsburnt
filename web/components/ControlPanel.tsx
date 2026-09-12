@@ -8,7 +8,10 @@ interface Props {
   meta: Meta;
   sel: Selection;
   onChange: (patch: Partial<Selection>) => void;
-  layers: { shadow: boolean; trees: boolean; buildings: boolean; trips: boolean };
+  layers: {
+    shadow: boolean; canopy: boolean; trees: boolean;
+    stops: boolean; buildings: boolean; trips: boolean;
+  };
   onLayers: (patch: Partial<Props["layers"]>) => void;
   mode: SourceMode;
   busy: boolean;
@@ -106,7 +109,9 @@ export default function ControlPanel({
         <div className="grid grid-cols-2 gap-1.5">
           {([
             ["shadow", "Building shade"],
+            ["canopy", "Tree canopy"],
             ["trees", "City trees"],
+            ["stops", "Bus stops"],
             ["buildings", "Buildings"],
             ["trips", "Walking routes"],
           ] as const).map(([key, label]) => (
@@ -172,9 +177,41 @@ export default function ControlPanel({
           }))}
           onSelect={(budget) => onChange({ budget })}
         />
+        <div className="mt-2.5">
+          <div className="mb-1.5 text-[10px] uppercase tracking-wider text-slate-500">
+            Spend it on
+          </div>
+          <Choice
+            value={sel.variant}
+            options={[
+              { key: "all", label: "Optimise across all" },
+              ...Object.entries(meta.interventions).map(([k, v]) => ({
+                key: k,
+                label: v.label,
+                hint: `$${v.cost_usd.toLocaleString()} each · shades ~${v.shade_m} m`,
+              })),
+            ]}
+            onSelect={(variant) => onChange({ variant })}
+          />
+          {sel.variant !== "all" && meta.interventions[sel.variant] && (
+            <p className="mt-1.5 text-[11px] text-slate-500">
+              ${meta.interventions[sel.variant].cost_usd.toLocaleString()} each ·
+              shades ~{meta.interventions[sel.variant].shade_m} m
+              {meta.interventions[sel.variant].site_constrained && meta.shelter_sites && (
+                <span className="text-amber-700">
+                  {" "}· only {meta.shelter_sites.total_sites} real unsheltered
+                  stops are eligible
+                </span>
+              )}
+            </p>
+          )}
+        </div>
       </Row>
 
-      <div className="sticky bottom-0 mt-auto space-y-2 border-t border-slate-200 bg-white p-4">
+      {/* Spacer so the sticky action bar never covers the last control row. */}
+      <div className="h-2 shrink-0" />
+
+      <div className="sticky bottom-0 mt-auto space-y-2 border-t border-slate-200 bg-white p-4 shadow-[0_-4px_12px_rgba(0,0,0,0.04)]">
         <button
           onClick={onCrashTest}
           disabled={busy}

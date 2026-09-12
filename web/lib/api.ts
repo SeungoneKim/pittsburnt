@@ -60,7 +60,7 @@ async function statik<T>(file: string): Promise<T> {
 // The static bundle is fetched once and reused for every subsequent answer.
 let bundle: {
   crash?: { sun_by_hour: Record<string, number[]>; results: Record<string, CrashResult> };
-  adapts?: { kinds: string[]; results: Record<string, RawAdapt> };
+  adapts?: { kinds: string[]; variants: string[]; results: Record<string, RawAdapt> };
   meta?: Meta;
 } = {};
 
@@ -138,6 +138,7 @@ export async function adapt(sel: Selection, before: CrashResult): Promise<AdaptR
     body: JSON.stringify({
       scenario: sel.scenario, hour: sel.hour, persona: sel.persona,
       budget_usd: sel.budget,
+      kinds: sel.variant === "all" ? null : [sel.variant],
     }),
   });
 
@@ -161,7 +162,8 @@ export async function adapt(sel: Selection, before: CrashResult): Promise<AdaptR
 
   setMode("fallback");
   const [b, meta] = [await adaptBundle(), await loadMeta()];
-  const r = b.results[`${sel.scenario}|${sel.hour}|${sel.persona}|${sel.budget}`];
+  const r = b.results[
+    `${sel.scenario}|${sel.hour}|${sel.persona}|${sel.budget}|${sel.variant}`];
   if (!r) throw new Error("no precomputed adapt for that budget");
   // Static results ship as a diff against the baseline; rebuild the full array.
   const exposure = before.exposure.slice();

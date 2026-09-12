@@ -85,6 +85,20 @@ def main() -> int:
           out["reduction_pct"] >= small["reduction_pct"] - 1e-9,
           f"$250k {out['reduction_pct']:.2f}% vs $50k {small['reduction_pct']:.2f}%")
 
+    # A bus shelter can only go where a real unsheltered stop is, so the
+    # optimiser must never buy more shelters than there are sites.
+    from engine import INTERVENTIONS as IV
+    if "transit_shelter" in IV and e.shelter_sites:
+        cap = int(sum(e.shelter_sites.values()))
+        big = a.optimize("heat2035", 15, "older_adults", 10_000_000,
+                         ["transit_shelter"])
+        check("shelters bounded by real stop inventory",
+              big["counts"]["transit_shelter"] <= cap,
+              f"{big['counts']['transit_shelter']} placed, {cap} real sites")
+        check("restricting the kind restricts the spend",
+              set(big["counts"]) == {"transit_shelter"},
+              " / ".join(f"{k}:{v}" for k, v in big["counts"].items()))
+
     # Determinism: the same request twice must give the same answer.
     r1 = e.crash_test("heat2035", 15, "older_adults").total
     r2 = e.crash_test("heat2035", 15, "older_adults").total

@@ -72,7 +72,10 @@ interface Props {
   adapted: AdaptResult | null;
   scaleMax: number;
   hour: Hour;
-  layers: { shadow: boolean; trees: boolean; buildings: boolean; trips: boolean };
+  layers: {
+    shadow: boolean; canopy: boolean; trees: boolean;
+    stops: boolean; buildings: boolean; trips: boolean;
+  };
   onSegmentClick?: (segId: string, index: number) => void;
 }
 
@@ -142,7 +145,39 @@ export default function MapView({
           });
         }
 
-        m.addSource("trees", { type: "geojson", data: trees });
+          // Canopy is a 1 m raster, and at 3 PM it shades roughly twice what
+        // buildings do - the core of the argument for planting trees, so it
+        // has to be visible, not just an input.
+        if (meta.canopy) {
+          m.addSource("canopy", {
+            type: "image", url: "/data/canopy.png", coordinates: meta.canopy.bounds,
+          });
+          m.addLayer({
+            id: "canopy", type: "raster", source: "canopy",
+            layout: { visibility: "none" },
+            paint: { "raster-opacity": 0.55 },
+          });
+        }
+
+        const stops = await fetch("/data/bus_stops.geojson")
+          .then((r) => r.json()).catch(() => null);
+        if (stops) {
+          m.addSource("stops", { type: "geojson", data: stops });
+          m.addLayer({
+            id: "stops", type: "circle", source: "stops",
+            layout: { visibility: "none" },
+            paint: {
+              // Filled = already sheltered; hollow = a candidate site.
+              "circle-radius": ["interpolate", ["linear"], ["zoom"], 13, 3, 17, 7],
+              "circle-color": ["case", ["get", "sheltered"], "#2f6fb3", "#ffffff"],
+              "circle-stroke-color": "#2f6fb3",
+              "circle-stroke-width": 1.6,
+              "circle-opacity": 0.9,
+            },
+          });
+        }
+
+      m.addSource("trees", { type: "geojson", data: trees });
         m.addLayer({
           id: "trees", type: "circle", source: "trees",
           layout: { visibility: "none" },
@@ -298,7 +333,9 @@ export default function MapView({
       if (m.getLayer(id)) m.setLayoutProperty(id, "visibility", on ? "visible" : "none");
     };
     set("buildings", layers.buildings);
+    set("canopy", layers.canopy);
     set("trees", layers.trees);
+    set("stops", layers.stops);
     set("trips", layers.trips);
     for (const h of meta.hours) set(`shadow-${h}`, layers.shadow && h === hour);
   }, [layers, hour, meta.hours]);

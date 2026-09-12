@@ -226,6 +226,27 @@ def verify_trips() -> None:
     check("trip seed recorded", "seed" in meta, f"seed {meta.get('seed')}")
 
 
+def verify_transit() -> None:
+    path = CACHE / "bus_stops.geojson"
+    if not path.exists():
+        check("bus_stops.geojson exists", False, "missing - run step07")
+        return
+    stops = gpd.read_file(path)
+    sites = json.loads((CACHE / "shelter_sites.json").read_text())
+    seg_ids = set(gpd.read_file(CACHE / "segments.geojson")["seg_id"])
+
+    check("bus_stops.geojson exists", True,
+          f"{len(stops)} stops, {int(stops.sheltered.sum())} already sheltered")
+    check("every stop attaches to a real segment",
+          set(stops["seg_id"]) <= seg_ids)
+    check("shelter sites are unsheltered stops only",
+          sites["total_sites"] == int((~stops["sheltered"]).sum()),
+          f"{sites['total_sites']} candidate sites")
+    check("stops snapped close to their segment",
+          bool((stops["snap_m"] <= 40).all()),
+          f"max {stops.snap_m.max():.1f} m")
+
+
 def main() -> int:
     verify_segments()
     verify_edge_map()
@@ -233,6 +254,7 @@ def main() -> int:
     verify_shadows()
     verify_trees()
     verify_trips()
+    verify_transit()
 
     width = max(len(n) for _, n, _ in results)
     n_fail = 0

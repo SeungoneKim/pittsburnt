@@ -19,12 +19,25 @@ import numpy as np
 
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent / "api"))
 
-from config import CACHE, CENTER, CORRIDORS, HOURS, PERSONAS, ROOT  # noqa: E402
+from config import (CACHE, CENTER, CORRIDORS, CRS_METRIC, CRS_WGS84, HOURS,  # noqa: E402
+                    PERSONAS, ROOT)
 from engine import Adapter, Engine  # noqa: E402
 
 OUT = ROOT / "web" / "public" / "data"
 # Budgets the UI offers as presets; arbitrary amounts need the live API.
 FALLBACK_BUDGETS = [50_000, 100_000, 250_000, 500_000, 1_000_000]
+
+# Which intervention types the optimiser may spend on. The brief's ADAPT row
+# says "add or optimize Trees / Shade structures / Cooling stations", so the
+# choice belongs to the user. Trees dominate on exposure-per-dollar for
+# people who are *walking*, so without this the other two are never bought
+# and the demo could never show them at all.
+VARIANTS: dict[str, list[str] | None] = {
+    "all": None,
+    "tree": ["tree"],
+    "shade_structure": ["shade_structure"],
+    "transit_shelter": ["transit_shelter"],
+}
 # Coordinate precision: ~1 m at this latitude, and it roughly halves the file.
 COORD_DP = 5
 
@@ -62,6 +75,7 @@ def main() -> None:
 
     for name, src, simp in [("trips", "trips.geojson", 0.00002),
                             ("trees", "trees.geojson", 0.0),
+                            ("bus_stops", "bus_stops.geojson", 0.0),
                             ("buildings", "buildings.geojson", 0.00003)]:
         path = CACHE / src
         if not path.exists():
@@ -71,6 +85,41 @@ def main() -> None:
             g["geometry"] = g.geometry.simplify(simp)
         (OUT / f"{name}.geojson").write_text(
             json.dumps(round_geojson(json.loads(g.to_json())), separators=(",", ":")))
+
+    # Canopy is a 1 m raster, so it ships as a PNG overlay with its corner
+    # coordinates rather than as polygons. It is the dominant shade source at
+    # the demo's hero hour, so the UI has to be able to show it.
+    try:
+        import base64  # noqa: F401
+        import io as _io
+
+        from PIL import Image
+        from shapely.geometry import box as _box
+
+        import canopy as canopy_mod
+        mask, geo = canopy_mod.build_mask()
+        rgba = np.zeros((*mask.shape, 4), dtype=np.uint8)
+        rgba[mask] = (31, 122, 62, 205)
+        img = Image.fromarray(np.flipud(rgba))
+        img.thumbnail((2000, 2000))
+        img.save(OUT / "canopy.png", optimize=True)
+
+        minx, miny, px = geo
+        maxx = minx + mask.shape[1] * px
+        maxy = miny + mask.shape[0] * px
+        w, s_, e_, n_ = gpd.GeoSeries([_box(minx, miny, maxx, maxy)], crs=CRS_METRIC) \
+            .to_crs(CRS_WGS84).iloc[0].bounds
+        canopy_meta = {
+            "bounds": [[w, n_], [e_, n_], [e_, s_], [w, s_]],
+            "cover_pct": round(float(mask.mean()) * 100, 1),
+            "source": canopy_mod.CANOPY_SOURCE,
+            "vintage": canopy_mod.CANOPY_VINTAGE,
+        }
+        print(f"  canopy overlay: {mask.shape[1]}x{mask.shape[0]} px, "
+              f"{canopy_meta['cover_pct']}% cover")
+    except Exception as exc:
+        canopy_meta = None
+        print(f"  canopy overlay skipped: {exc}")
 
     for h in HOURS:
         sp = CACHE / f"shadow_{h:02d}.geojson"
@@ -109,13 +158,14 @@ def main() -> None:
         for hour in HOURS:
             for persona in e.personas:
                 for budget in FALLBACK_BUDGETS:
-                    out = adapter.optimize(sc, hour, persona, budget)
+                  for vname, kinds_sel in VARIANTS.items():
+                    out = adapter.optimize(sc, hour, persona, budget, kinds_sel)
                     before, after = out["before"].exposure, out["after"].exposure
                     # An intervention only ever touches a few dozen segments,
                     # so ship the diff rather than a full 2,409-value array -
                     # the difference between an 8 MB bundle and a 100 KB one.
                     moved = np.nonzero(np.abs(after - before) > 1e-6)[0]
-                    adapts[f"{sc}|{hour}|{persona}|{budget}"] = {
+                    adapts[f"{sc}|{hour}|{persona}|{budget}|{vname}"] = {
                         "spent_usd": out["spent_usd"],
                         "counts": out["counts"],
                         "before_total": round(out["before"].total, 2),
@@ -131,12 +181,13 @@ def main() -> None:
                                                for p in out["placements"]).items()],
                     }
     print(f"  precomputed {len(adapts)} adapt runs "
-          f"({len(FALLBACK_BUDGETS)} budgets each)")
+          f"({len(FALLBACK_BUDGETS)} budgets x {len(VARIANTS)} intervention sets)")
 
     (OUT / "crash_tests.json").write_text(json.dumps(
         {"sun_by_hour": sun_by_hour, "results": crash}, separators=(",", ":")))
     (OUT / "adapts.json").write_text(json.dumps(
-        {"kinds": kinds, "results": adapts}, separators=(",", ":")))
+        {"kinds": kinds, "variants": list(VARIANTS), "results": adapts},
+        separators=(",", ":")))
 
     # --- meta -------------------------------------------------------------
     sun = np.load(CACHE / "sun_exposure.npz", allow_pickle=True)
@@ -147,8 +198,12 @@ def main() -> None:
         "seg_ids": e.seg_ids,
         "budgets": FALLBACK_BUDGETS,
         "interventions": {k: {"label": v["label"], "cost_usd": v["cost_usd"],
-                              "shade_m": v["shade_m"]}
+                              "shade_m": v["shade_m"],
+                              "site_constrained": bool(v.get("site_constrained"))}
                           for k, v in INTERVENTIONS.items()},
+        "variants": list(VARIANTS),
+        "shelter_sites": json.loads((CACHE / "shelter_sites.json").read_text())
+                         if (CACHE / "shelter_sites.json").exists() else None,
         "personas": [{"key": p["persona"], "label": p["label"],
                       "speed_mps": p["speed_mps"],
                       "planning_weight": p["planning_weight"],
@@ -157,6 +212,7 @@ def main() -> None:
                        "is_extrapolated": v["is_extrapolated"]}
                       for k, v in e.scenarios["scenarios"].items()],
         "climate_method": e.scenarios["method"],
+        "canopy": canopy_meta,
         "canopy_source": str(sun["canopy_source"]),
         "canopy_vintage": str(sun["canopy_vintage"]),
         "trip_seed": e.trip_meta["seed"],
