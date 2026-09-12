@@ -25,7 +25,10 @@ export default function StageOverlay({
   if (!headline && !canReplay) return null;
 
   return (
-    <div className="pointer-events-none absolute left-1/2 top-4 z-10 w-[520px] -translate-x-1/2">
+    // Centred in the space left of the result panel, not in the whole map,
+    // so the two never overlap at the width the demo is shown at.
+    <div className="pointer-events-none absolute left-4 right-[374px] top-4 z-10
+      mx-auto max-w-[520px]">
       {headline && (
         <div className="rounded-xl border border-slate-200 bg-white/95 px-4 py-3 shadow-lg backdrop-blur">
           <div className="flex items-baseline justify-between gap-3">
