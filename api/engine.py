@@ -240,6 +240,30 @@ class Engine:
                   "shade_relief_c": cond["shade_relief_c"]},
         )
 
+    def day_profile(self, scenario: str, persona: str) -> list[dict]:
+        """Severe minutes and peak UTCI across the whole day.
+
+        Two thirds of scenario-hour combinations legitimately produce zero
+        severe minutes, and a bare 0 reads as a broken product rather than as
+        the finding it is. Showing the day's shape turns "nothing here" into
+        "not yet, and here is when" - and it costs four array operations.
+        """
+        out = []
+        for hour in self.hours:
+            r = self.crash_test(scenario, hour, persona)
+            out.append({
+                "hour": hour,
+                "severe": round(r.severe_total, 2),
+                "heat_load": round(r.heat_load_total, 2),
+                "utci_sun_c": r.utci_sun_c,
+                "utci_shade_c": r.utci_shade_c,
+                "crosses": r.utci_sun_c >= SEVERE_UTCI_C,
+                # How far the hottest exposure sits from the threshold; the
+                # sign is what makes a zero legible.
+                "headroom_c": round(r.utci_sun_c - SEVERE_UTCI_C, 2),
+            })
+        return out
+
     def hotspots(self, res: Result, top: int = 20) -> list[dict]:
         """Ranked by human exposure, which is not the same as by temperature.
 
@@ -335,8 +359,12 @@ class Adapter:
         This is a simulation-recommended allocation, not a proven optimum:
         greedy explores one unit at a time rather than every combination.
         """
-        kinds = kinds or list(INTERVENTIONS)
+        # Hash the request AS MADE, before defaulting. The caller asked for
+        # "any intervention"; expanding that to the concrete list first would
+        # produce a hash the caller cannot reproduce, and every such plan
+        # would be refused as a mismatch.
         plan_hash = self.e.input_hash(scenario, hour, persona, budget_usd, kinds)
+        kinds = kinds or list(INTERVENTIONS)
         hi = self.e.hour_index(hour)
         p = self.e.persona_index(persona)
         cond = self.e.conditions(scenario, hour)

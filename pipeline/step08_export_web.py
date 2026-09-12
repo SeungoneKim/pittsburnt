@@ -225,6 +225,7 @@ def main() -> None:
                     "severe_minutes": [round(float(x), 3) for x in r.severe_minutes],
                     "heat_load": [round(float(x), 2) for x in r.heat_load],
                     "minutes": [round(float(x), 3) for x in r.minutes],
+                    "day_profile": e.day_profile(sc, persona),
                 }
     print(f"  precomputed {len(crash)} crash tests "
           f"({len(scenarios)} scenarios x {len(HOURS)} hours x {len(e.personas)} personas)")

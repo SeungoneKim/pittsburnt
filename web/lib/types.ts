@@ -87,8 +87,20 @@ export interface WaitingMeta {
   unsheltered_stops: number;
 }
 
+export interface DayHour {
+  hour: number;
+  severe: number;
+  heat_load: number;
+  utci_sun_c: number;
+  utci_shade_c: number;
+  crosses: boolean;
+  /** Degrees above (+) or below (-) the severe threshold, in full sun. */
+  headroom_c: number;
+}
+
 export interface CrashResult {
   input_hash: string;
+  day_profile: DayHour[];
   snapshot_id: string;
   status: string;
   severe_total: number;          // walking + waiting, at or above UTCI 38 C

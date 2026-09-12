@@ -191,6 +191,19 @@ def main() -> int:
     clashes = [k for k, v in variants.items() if v == base.input_hash]
     check("every input changes the hash", not clashes,
           clashes or " / ".join(variants))
+    # The hash must describe the request as made. Expanding an omitted
+    # "kinds" to the concrete list before hashing produces a value the caller
+    # cannot reproduce, and every such plan is then refused as a mismatch -
+    # which is exactly what happened until this was caught.
+    for kinds, label in [(None, "all"), (["tree"], "tree"),
+                         (["shaded_shelter"], "shelter")]:
+        got = a.optimize(*HERO, 250000, kinds)["input_hash"]
+        want = ihash(dataset_version=e.dataset_version, scenario=HERO[0],
+                     hour=HERO[1], persona=HERO[2], budget_usd=250000,
+                     kinds=kinds)
+        check(f"plan hash reproducible by the caller ({label})", got == want,
+              f"{got} vs {want}")
+
     b250 = a.optimize(*HERO, 250000)["input_hash"]
     b137 = a.optimize(*HERO, 137500)["input_hash"]
     check("different budgets produce different plan hashes", b250 != b137,

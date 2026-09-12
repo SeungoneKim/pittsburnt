@@ -176,6 +176,7 @@ def crash_test(req: CrashTestRequest) -> dict:
         "weighted_severe_person_minutes": round(res.weighted_severe_total, 2),
         "planning_weight": res.planning_weight,
         "severe_threshold_utci_c": SEVERE_UTCI_C,
+        "day_profile": engine.day_profile(req.scenario, req.persona),
         **_segments_payload(res, 20),
         "disclaimer": DISCLAIMER,
     }

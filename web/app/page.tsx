@@ -268,6 +268,7 @@ export default function Page() {
               adapted={adaptStage === "land" || adaptStage === "complete"
                 ? adapted : null}
               hotspots={hotspots}
+              onPickHour={(h) => patch({ hour: h })}
             />
           </div>
 

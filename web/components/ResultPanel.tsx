@@ -1,7 +1,8 @@
 "use client";
 
+import DayProfile from "@/components/DayProfile";
 import ValueBadge from "@/components/ValueBadge";
-import type { AdaptResult, CrashResult, Meta, Selection } from "@/lib/types";
+import type { AdaptResult, CrashResult, Hour, Meta, Selection } from "@/lib/types";
 
 interface Props {
   meta: Meta;
@@ -9,6 +10,7 @@ interface Props {
   result: CrashResult | null;
   adapted: AdaptResult | null;
   hotspots: { segId: string; corridor: string | null; value: number; unit: string }[];
+  onPickHour: (h: Hour) => void;
 }
 
 const fmt = (n: number) => Math.round(n).toLocaleString();
@@ -38,7 +40,9 @@ function Layer({ n, title, children }: {
   );
 }
 
-export default function ResultPanel({ meta, sel, result, adapted, hotspots }: Props) {
+export default function ResultPanel({
+  meta, sel, result, adapted, hotspots, onPickHour,
+}: Props) {
   if (!result) {
     return (
       <div className="w-[350px] rounded-xl border border-slate-200 bg-white/95 p-4 shadow-lg backdrop-blur">
@@ -57,6 +61,8 @@ export default function ResultPanel({ meta, sel, result, adapted, hotspots }: Pr
   const sunBand = band(result.utci_sun_c);
   const shadeBand = band(result.utci_shade_c);
   const useSevere = result.severe_total > 0;
+  const here = result.day_profile?.find((d) => d.hour === sel.hour);
+  const headroom = here?.headroom_c ?? 0;
 
   return (
     <div className="w-[350px] space-y-3 rounded-xl border border-slate-200 bg-white/95 p-4 shadow-lg backdrop-blur">
@@ -124,29 +130,44 @@ export default function ResultPanel({ meta, sel, result, adapted, hotspots }: Pr
       <Layer n={3} title="Human exposure">
         {!adapted ? (
           <>
-            <div className="text-2xl font-bold tabular-nums text-slate-900">
-              {fmt(result.severe_total)}
-              <span className="ml-1 text-xs font-normal text-slate-500">
-                severe person-minutes
-              </span>
-              <ValueBadge meta={meta.value_meta?.severe_person_minutes} compact />
-            </div>
-            <p className="text-[11px] text-slate-500">
-              at or above {meta.severe_threshold_utci_c} °C ·{" "}
-              heat load {fmt(result.heat_load_total)}
-            </p>
-            <p className="text-[11px] text-slate-600">
-              {fmt(result.walking_severe_total)} walking ·{" "}
-              {fmt(result.waiting_severe_total)} waiting at stops
-              <ValueBadge meta={meta.value_meta?.waiting_minutes} compact />
-            </p>
-            {!useSevere && (
-              <p className="mt-1 text-[11px] text-sky-800">
-                Nobody crosses the severe threshold in this scenario. Ranking
-                falls back to cumulative heat load.
-              </p>
+            {useSevere ? (
+              <>
+                <div className="text-2xl font-bold tabular-nums text-slate-900">
+                  {fmt(result.severe_total)}
+                  <span className="ml-1 text-xs font-normal text-slate-500">
+                    severe person-minutes
+                  </span>
+                  <ValueBadge meta={meta.value_meta?.severe_person_minutes} compact />
+                </div>
+                <p className="text-[11px] text-slate-500">
+                  at or above {meta.severe_threshold_utci_c} °C ·{" "}
+                  heat load {fmt(result.heat_load_total)}
+                </p>
+                <p className="text-[11px] text-slate-600">
+                  {fmt(result.walking_severe_total)} walking ·{" "}
+                  {fmt(result.waiting_severe_total)} waiting at stops
+                  <ValueBadge meta={meta.value_meta?.waiting_minutes} compact />
+                </p>
+              </>
+            ) : (
+              /* Zero is a result, not an empty state: say how close it came. */
+              <>
+                <div className="text-xl font-bold text-sky-800">
+                  Below the severe threshold
+                </div>
+                <p className="text-[11px] leading-relaxed text-slate-600">
+                  Nobody reaches {meta.severe_threshold_utci_c} °C at this hour.
+                  The hottest exposure is{" "}
+                  <b>{Math.abs(headroom).toFixed(1)} °C short</b> of it, so the
+                  measure here is cumulative burden:{" "}
+                  <b className="tabular-nums">{fmt(result.heat_load_total)}</b>{" "}
+                  heat load.
+                </p>
+              </>
             )}
-            {persona && persona.planning_weight !== 1 && (
+            {/* A weighted zero says nothing; only show it when there is
+                something to weight. */}
+            {useSevere && persona && persona.planning_weight !== 1 && (
               <p className="mt-1 text-[11px] text-amber-700">
                 {fmt(result.weighted_severe_total)} under a ×
                 {persona.planning_weight} planning priority — a policy choice,
@@ -218,7 +239,16 @@ export default function ResultPanel({ meta, sel, result, adapted, hotspots }: Pr
         )}
       </Layer>
 
-      <Layer n={4} title="Where people are most exposed">
+      <Layer n={4} title="When it bites">
+        <DayProfile
+          profile={result.day_profile}
+          hour={sel.hour}
+          threshold={meta.severe_threshold_utci_c}
+          onPick={onPickHour}
+        />
+      </Layer>
+
+      <Layer n={5} title="Where people are most exposed">
         <ol className="space-y-1">
           {hotspots.slice(0, 5).map((h, i) => (
             <li key={h.segId} className="flex items-baseline gap-2 text-xs">

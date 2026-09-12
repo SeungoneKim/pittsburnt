@@ -135,6 +135,7 @@ export async function crashTest(sel: Selection): Promise<CrashResult> {
     conditions: CrashResult["conditions"] & {
       utci_sun_c: number; utci_shade_c: number;
     };
+    day_profile: CrashResult["day_profile"];
     segments: { severe_minutes: number; heat_load: number;
                 sun_exposure: number; minutes: number }[];
   }>("/crash-test", {
@@ -152,7 +153,7 @@ export async function crashTest(sel: Selection): Promise<CrashResult> {
     const { utci_sun_c, utci_shade_c, ...cond } = live.conditions;
     return {
       input_hash: live.input_hash, snapshot_id: live.snapshot_id,
-      status: live.status,
+      status: live.status, day_profile: live.day_profile,
       severe_total: live.severe_person_minutes,
       walking_severe_total: live.walking_severe_person_minutes,
       waiting_severe_total: live.waiting_severe_person_minutes,
