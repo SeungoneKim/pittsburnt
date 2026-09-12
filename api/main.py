@@ -106,9 +106,16 @@ def meta() -> dict:
             "Planning weight is a city priority for who a heat plan should "
             "protect first. It is not a physiological risk coefficient, and "
             "unweighted exposure is reported alongside every weighted figure."),
-        "scenarios": [{"key": k, "label": v["label"], "delta_c": v["delta_c"],
-                       "is_extrapolated": v["is_extrapolated"]}
-                      for k, v in engine.scenarios["scenarios"].items()],
+        # Whether an hour crosses the severe threshold depends on the
+        # scenario and the hour only, not on who is walking - so the climate
+        # story can be shown before anything is run.
+        "scenarios": [{
+            "key": k, "label": v["label"], "delta_c": v["delta_c"],
+            "is_extrapolated": v["is_extrapolated"],
+            "hours_crossing": sum(1 for h in v["hours"].values()
+                                  if h["utci_sun_c"] >= SEVERE_UTCI_C),
+            "peak_utci_c": round(max(h["utci_sun_c"] for h in v["hours"].values()), 1),
+        } for k, v in engine.scenarios["scenarios"].items()],
         "climate_method": engine.scenarios["method"],
         "interventions": INTERVENTIONS,
         "severe_threshold_utci_c": SEVERE_UTCI_C,

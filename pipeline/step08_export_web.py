@@ -311,9 +311,13 @@ def main() -> None:
                       "composition": p.get("composition"),
                       "composition_note": p.get("composition_note")}
                      for p in e.trip_meta["personas"]],
-        "scenarios": [{"key": k, "label": v["label"], "delta_c": v["delta_c"],
-                       "is_extrapolated": v["is_extrapolated"]}
-                      for k, v in e.scenarios["scenarios"].items()],
+        "scenarios": [{
+            "key": k, "label": v["label"], "delta_c": v["delta_c"],
+            "is_extrapolated": v["is_extrapolated"],
+            "hours_crossing": sum(1 for h in v["hours"].values()
+                                  if h["utci_sun_c"] >= SEVERE_UTCI_C),
+            "peak_utci_c": round(max(h["utci_sun_c"] for h in v["hours"].values()), 1),
+        } for k, v in e.scenarios["scenarios"].items()],
         "climate_method": e.scenarios["method"],
         "canopy": canopy_meta,
         # The square the model actually runs in. Drawn on the map so a viewer

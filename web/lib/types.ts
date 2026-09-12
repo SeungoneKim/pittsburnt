@@ -17,6 +17,9 @@ export interface Scenario {
   label: string;
   delta_c: number;
   is_extrapolated: boolean;
+  /** How many of the four snapshot hours reach Very Strong Heat Stress. */
+  hours_crossing: number;
+  peak_utci_c: number;
 }
 
 export interface Intervention {

@@ -159,6 +159,12 @@ export default function ControlPanel({
         <p className="text-[11px] uppercase tracking-wider text-blue-700">
           A crash test for cities
         </p>
+        {/* The question the tool actually answers, stated up front. */}
+        <p className="mt-1.5 text-[11px] leading-snug text-slate-600">
+          Not <i>where is Pittsburgh hottest</i> — where do people{" "}
+          <b>accumulate</b> the most heat moving through it, and what does a
+          dollar of shade buy?
+        </p>
         <div className="mt-2 flex items-center gap-1.5 text-[10px]">
           <span
             className={`h-1.5 w-1.5 rounded-full ${
@@ -252,15 +258,46 @@ export default function ControlPanel({
       <Row n={5} title="Future scenario">
         <Choice
           value={sel.scenario}
-          options={meta.scenarios.map((s) => ({ key: s.key, label: s.label }))}
+          options={meta.scenarios.map((s) => ({
+            key: s.key, label: s.label,
+            hint: `peak UTCI ${s.peak_utci_c} °C · crosses the severe `
+              + `threshold at ${s.hours_crossing} of 4 hours`,
+          }))}
           onSelect={(scenario) => onChange({ scenario })}
         />
+        {/* The climate story, visible before anything is run: whether an
+            hour crosses depends on the scenario and hour alone. */}
+        <div className="mt-2 space-y-1">
+          {meta.scenarios.map((s) => (
+            <div key={s.key} className="flex items-center gap-2 text-[11px]">
+              <span className={`w-[118px] truncate ${
+                s.key === sel.scenario ? "font-medium text-slate-900" : "text-slate-500"
+              }`}>
+                {s.label}
+              </span>
+              <span className="flex gap-0.5">
+                {meta.hours.map((h, i) => (
+                  <span
+                    key={h}
+                    title={`${h}:00`}
+                    className={`h-2.5 w-2.5 rounded-sm ${
+                      i < s.hours_crossing ? "bg-red-600" : "bg-slate-200"
+                    }`}
+                  />
+                ))}
+              </span>
+              <span className="tabular-nums text-slate-500">
+                {s.hours_crossing === 0
+                  ? "never crosses"
+                  : `${s.hours_crossing}/4 hours`}
+              </span>
+            </div>
+          ))}
+        </div>
         {scenario && scenario.delta_c > 0 && (
           <p className="mt-1.5 text-[11px] text-slate-500">
-            +{scenario.delta_c.toFixed(2)} °C on the observed hot day
-            {scenario.is_extrapolated && (
-              <span className="text-amber-700"> · trend extrapolation</span>
-            )}
+            +{scenario.delta_c.toFixed(2)} °C on the observed hot day · peak
+            UTCI {scenario.peak_utci_c} °C
           </p>
         )}
       </Row>
