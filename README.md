@@ -34,10 +34,15 @@ intervention. It is not a medical forecast and not a heatstroke probability.
 
 ## Quick start
 
+Two terminals:
+
 ```bash
-make api          # FastAPI on :8000  (engine over cached arrays)
-cd web && npm run dev    # Next.js on :3000
+make api     # FastAPI engine on :8000
+make web     # Next.js frontend on :3000  ->  open http://localhost:3000
 ```
+
+Then: pick a time / population / scenario, hit **RUN CRASH TEST**, then
+**ADAPT PITTSBURGH**.
 
 The frontend works with the API down — it falls back to a precomputed static
 bundle in `web/public/data` and says so in the UI.
@@ -49,6 +54,8 @@ without it the map renders via MapLibre on OpenStreetMap tiles.
 
 Each step caches its artifacts, so steps only re-run when you want them to.
 
+`make pipeline` runs everything in order, or run a single step:
+
 ```bash
 make step1   # OSM walk graph → 2,409 corridor-labelled segments
 make step2   # building footprints + tiered height estimates
@@ -59,9 +66,13 @@ make step6   # observed hot day + CMIP6 ensemble → heat scenarios
 make step8   # static fallback bundle for the web app
 ```
 
+You do not need to run these to demo: every artifact they produce is
+committed, so a fresh clone can go straight to `make api` / `make web`.
+
 ## Supervising the work
 
 ```bash
+make check             # verify + test-engine together
 make verify            # 50 assertions over every cached artifact
 make test-engine       # 13 engine property tests
 make check-determinism # proves the same seed reproduces the same trips
