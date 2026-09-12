@@ -80,11 +80,15 @@ interface Props {
     buildings: boolean; trips: boolean; agents: boolean;
   };
   persona: string;
+  crashStage: string;
+  adaptStage: string;
+  stageProgress: number;
   onSegmentClick?: (segId: string, index: number) => void;
 }
 
 export default function MapView({
-  meta, result, adapted, hour, layers, persona, onSegmentClick,
+  meta, result, adapted, hour, layers, persona, crashStage, adaptStage,
+  stageProgress, onSegmentClick,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const map = useRef<GLMap | null>(null);
@@ -343,7 +347,12 @@ export default function MapView({
   useEffect(() => {
     const m = map.current;
     if (!m || !ready.current) return;
-    if (!result) {
+    // Each beat reveals its own layer. Nothing here computes: the values
+    // were all returned by the engine before the sequence started.
+    const showThermal = ["thermal", "people", "hotspot", "complete"]
+      .includes(crashStage);
+    const showHalo = ["hotspot", "complete"].includes(crashStage);
+    if (!result || !showThermal) {
       for (let i = 0; i < meta.seg_ids.length; i += 1) {
         m.setFeatureState({ source: "segments", id: i }, { scored: false, utci: 0 });
       }
@@ -377,10 +386,10 @@ export default function MapView({
         utci,
         severe: severe[i],
         sun,
-        hotspot: isHotspot.has(i),
+        hotspot: showHalo && isHotspot.has(i),
       });
     }
-  }, [result, adapted, meta.seg_ids.length]);
+  }, [result, adapted, meta.seg_ids.length, crashStage, adaptStage, stageProgress]);
 
   // --- highlight where money was spent ------------------------------------
   useEffect(() => {
@@ -388,19 +397,27 @@ export default function MapView({
     if (!m || !ready.current) return;
     const src = m.getSource("placed");
     if (!src) return;
-    if (!adapted) {
+    const showPlacements = !["idle", "loading", "lock", "rank"]
+      .includes(adaptStage);
+    if (!adapted || !showPlacements) {
       src.setData({ type: "FeatureCollection", features: [] });
       return;
     }
     const data = segGeo.current;
     if (!data) return;
-    const wanted = new Set(adapted.placements.map((p) => p.seg_id));
+    // Placements land in optimiser order over the "place" beat: the first
+    // few individually, the rest in batches, so nobody waits through 208
+    // identical pops.
+    const frac = adaptStage === "place" ? stageProgress : 1;
+    const shown = Math.max(1, Math.round(adapted.placements.length * frac));
+    const wanted = new Set(
+      adapted.placements.slice(0, shown).map((p) => p.seg_id));
     src.setData({
       type: "FeatureCollection",
       features: data.features.filter(
         (f) => wanted.has(String((f.properties as Record<string, unknown>).seg_id))),
     });
-  }, [adapted]);
+  }, [adapted, adaptStage, stageProgress]);
 
   // --- layer toggles -------------------------------------------------------
   useEffect(() => {
@@ -429,7 +446,10 @@ export default function MapView({
       if (raf.current !== null) cancelAnimationFrame(raf.current);
       raf.current = null;
     };
-    if (!m || !ready.current || !layers.agents || !result || !tripGeo.current) {
+    const showAgents = ["people", "hotspot", "complete"].includes(crashStage)
+      || ["retest", "land", "complete"].includes(adaptStage);
+    if (!m || !ready.current || !layers.agents || !result || !tripGeo.current
+        || !showAgents) {
       stop();
       return stop;
     }
@@ -458,7 +478,8 @@ export default function MapView({
     };
     raf.current = requestAnimationFrame(tick);
     return stop;
-  }, [layers.agents, result, persona, hour, meta.severe_threshold_utci_c]);
+  }, [layers.agents, result, persona, hour, meta.severe_threshold_utci_c,
+      crashStage, adaptStage]);
 
   return (
     <div className="absolute inset-0">
