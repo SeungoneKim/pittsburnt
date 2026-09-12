@@ -138,8 +138,23 @@ export interface Placement {
   count: number;
 }
 
+export interface RankTrace {
+  by_kind: Record<string, {
+    units: number; cost_usd: number; severe_minutes_saved: number;
+    heat_load_saved: number; severe_per_1k_usd: number;
+  }>;
+  best_site: { seg_id: string; kind: string; cost_usd: number;
+    severe_minutes_saved: number } | null;
+  placements_considered: number;
+  unspent_usd: number;
+  unbought: { kind: string; label: string; cost_usd: number; reason: string }[];
+  objective: string;
+  claim: string;
+}
+
 export interface AdaptResult {
   input_hash: string;
+  rank_trace: RankTrace;
   snapshot_id: string;
   status: string;
   spent_usd: number;

@@ -8,29 +8,50 @@ accumulate the most heat while moving through the city, and what is the
 highest-impact intervention per dollar?**
 
 ```
-CRASH TEST  2035 heatwave · 3 PM · older adults    2,082 at-risk pedestrian-minutes
+CRASH TEST  2035 heatwave · 3 PM · older adults    950 severe person-minutes
 ADAPT       $250,000                               208 street trees
-RE-TEST     identical scenario                     1,974   →  −5.2%
+RE-TEST     identical scenario                     820  →  −20.7% corridors / −13.6% network
+```
+
+**The finding that matters:** at 2035 / 3 PM, a pedestrian in sun is at
+**UTCI 38.9 °C — "Very Strong Heat Stress"** — while one in shade is at
+35.1 °C, below it. Shade does not shave a percentage off an index; it moves
+someone across a published thermal-stress threshold.
+
+And the climate escalation falls out of the data, not out of a slide:
+
+```
+Observed hot-day baseline   peak UTCI 36.4 °C   never crosses 38 °C
+2035 Heatwave               peak UTCI 38.9 °C   crosses at 1 of 4 hours
+2050 Heatwave               peak UTCI 40.8 °C   crosses at 3 of 4 hours
 ```
 
 ## The model
 
+Thermal stress is **UTCI**, computed from air temperature, humidity, wind and
+mean radiant temperature. Sun enters through Tmrt, where it physically
+belongs: a pedestrian in shade receives diffuse sky radiation, one in sun also
+receives the direct beam.
+
 ```
-effective heat index = HI(scenario, hour) + 8 °C × sun_exposure(segment, hour)
-exposure(segment)    = severity(effective HI) × minutes(segment, persona, hour)
-                                              × planning_weight(persona)
+Tmrt(segment, hour)  = radiant budget with the direct beam scaled by sun exposure
+UTCI(segment, hour)  = f(air temp, humidity, wind, Tmrt)
+severe_person_min    = walking minutes + waiting minutes, where UTCI >= 38 °C
 ```
 
-Sun raises the *heat index* rather than scaling the score, because the NWS
-Heat Index is a shade measure and full sun adds roughly 8 °C to apparent
-temperature. Multiplying by sun exposure directly — as a literal reading of
-the brief suggests — would make a fully shaded street score exactly zero and
-any intervention look infinitely effective. Here, shading the entire network
-still leaves 1,250 of 2,082 at-risk pedestrian-minutes.
+`sun_exposure` is a *spatial fraction* — how much of a segment is unshaded —
+so a walker spends that share of their time in sun and the rest in shade, and
+each part is scored on its own UTCI. That is what makes shade act smoothly
+rather than as a switch.
 
-The output is a **modelled Heat Exposure Score in At-risk Pedestrian
-Minutes**: a relative measure for comparing the same city before and after an
-intervention. It is not a medical forecast and not a heatstroke probability.
+Exposure counts **walking and waiting**. Someone at an unshaded bus stop is
+standing still and cannot leave, and that is exactly the time a shaded
+shelter protects.
+
+The primary metric is **unweighted**. Planning priority for a vulnerable
+population is reported beside it, labelled a policy choice, and never folded
+into it. UTCI 38 °C is a published thermal-stress class — not a diagnosis,
+not a heatstroke probability.
 
 ## Quick start
 
@@ -89,14 +110,33 @@ must reduce but never zero exposure, the optimizer must respect its budget.
 
 | Layer | Source | Note |
 |---|---|---|
+| Thermal index | UTCI via `thermofeel` (ECMWF) | Severe threshold 38 °C, the published "Very Strong Heat Stress" class |
 | Walking network | OpenStreetMap via OSMnx | Oakland's main streets are `sidewalk=separate`, so corridor names are recovered by matching sidewalks to drive-network centrelines |
 | Building heights | OSM 3D `building:part`, `height`, `building:levels`; Allegheny County assessment `STORIES` | 59.5% measured; the rest modelled by type and footprint size. No authoritative height dataset exists for the county — PASDA publishes no DSM |
 | Tree canopy | Allegheny County Urban Tree Canopy (Tree Pittsburgh / Univ. of Vermont) | **2010 vintage.** 32% cover. The City street-tree inventory covers only the public right-of-way and yields 0.6% |
 | Street trees | City of Pittsburgh tree inventory | Per-tree crown width and height |
 | Solar position | pvlib | |
 | Observed climate | Open-Meteo archive (ERA5), 2005–2024 | Median diurnal profile of the hottest 5% of summer days |
-| Projections | CMIP6 downscaled, 7-model ensemble via Open-Meteo | 2035 uses the 2025–2049 window; 2050 is a trend extrapolation past the source's cutoff |
-| Heat index | NWS Rothfusz regression | Spot-checked against the published table |
+| Projections | **CMIP6-LOCA2**, 27-model county release (USGS) | 2025–2049 (+1.99 °C) and 2050–2074 (+3.57 °C), paired per model against its own 1981–2010 run. Nothing extrapolated |
+| Transit | PRT stop service frequency (WPRDC) + OSM shelter tags | 114 stops, 24 already sheltered; wait = half the headway |
 
 Pedestrian demand is **synthetic**, generated from a fixed seed so the before
 and after comparison runs the identical people over the identical geometry.
+
+## Honesty machinery
+
+Every displayed number carries a `ValueMeta` — `source`, `computed` or
+`assumption` — with a reference and a confidence class. Four are sourced, six
+computed, six assumed; the assumptions (synthetic trips, transit share,
+planning weight, unit costs) say so on the number itself.
+
+Every result carries an **input hash** over dataset version, scenario, hour,
+persona, budget and intervention set. A cached answer is refused unless that
+hash matches the request, so the $250K plan can never appear for a $137,500
+budget. The hash is reimplemented in the browser and verified byte-identical
+to the Python side.
+
+Building heights carry record-level provenance — source, raw value,
+conversion rule, assumed storey height, confidence. A modelled estimate stays
+low-confidence and stays out of the measured count; `make verify` fails if
+that ever changes.

@@ -314,6 +314,65 @@ INTERVENTIONS = {
 class Adapter:
     """Places interventions and measures what they buy."""
 
+    def _rank_trace(self, log, placed, kinds, hi, minutes, waiting,
+                    budget_usd, spent) -> dict:
+        """Evidence for why this plan, drawn only from the optimiser's own
+        decisions.
+
+        The spec's rule is that an explanation may use optimiser-trace values
+        and nothing else - no invented costs, no invented impacts, and no
+        chain-of-thought. So this reports what was bought, what it saved, the
+        single highest-value site, and why a type that was not bought lost.
+        """
+        by_kind: dict[str, dict] = {}
+        for entry in log:
+            k = entry["kind"]
+            rec = by_kind.setdefault(k, {"units": 0, "cost": 0.0,
+                                         "severe_saved": 0.0, "load_saved": 0.0})
+            rec["units"] += 1
+            rec["cost"] += entry["cost_usd"]
+            rec["severe_saved"] += entry["severe_minutes_saved"]
+            rec["load_saved"] += entry["heat_load_saved"]
+
+        best = max(log, key=lambda e: e["severe_minutes_saved"], default=None)
+        # Why a permitted type went unbought: compare best-value units.
+        unbought = []
+        for k in kinds:
+            if by_kind.get(k, {}).get("units"):
+                continue
+            spec = INTERVENTIONS[k]
+            reach = ("waiting time at transit stops"
+                     if spec.get("protects") == "waiting" else "footway")
+            unbought.append({
+                "kind": k, "label": spec["label"],
+                "cost_usd": spec["cost_usd"],
+                "reason": (f"{spec['label']} costs ${spec['cost_usd']:,} and "
+                           f"covers {reach}; no unit of it removed more severe "
+                           f"minutes per dollar than the cheapest tree still "
+                           f"available."),
+            })
+
+        return {
+            "by_kind": {k: {"units": v["units"],
+                            "cost_usd": round(v["cost"], 2),
+                            "severe_minutes_saved": round(v["severe_saved"], 3),
+                            "heat_load_saved": round(v["load_saved"], 2),
+                            "severe_per_1k_usd": round(
+                                v["severe_saved"] / max(v["cost"], 1) * 1000, 3)}
+                        for k, v in by_kind.items()},
+            "best_site": ({"seg_id": best["seg_id"], "kind": best["kind"],
+                           "cost_usd": best["cost_usd"],
+                           "severe_minutes_saved": best["severe_minutes_saved"]}
+                          if best else None),
+            "placements_considered": len(log),
+            "unspent_usd": round(budget_usd - spent, 2),
+            "unbought": unbought,
+            "objective": ("maximise severe person-minutes avoided, then heat "
+                          "load avoided, then minimise cost"),
+            "claim": ("simulation-recommended allocation; greedy search over "
+                      "unit placements, not a proven global optimum"),
+        }
+
     def __init__(self, engine: Engine, lengths: np.ndarray):
         self.e = engine
         self.lengths = lengths.astype(np.float64)
@@ -465,6 +524,8 @@ class Adapter:
             "shelter_delta": cover_delta,
             "reduction_pct": 100.0 * num / denom,
             "metric_used": "severe_person_minutes" if base.severe_total else "heat_load",
+            "rank_trace": self._rank_trace(log, placed, kinds, hi, minutes,
+                                           waiting, budget_usd, spent),
             "input_hash": plan_hash,
             "snapshot_id": snapshot_id(plan_hash, "adapt"),
             "status": "complete",

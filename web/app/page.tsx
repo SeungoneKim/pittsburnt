@@ -6,6 +6,7 @@ import AssumptionsPanel from "@/components/AssumptionsPanel";
 import ControlPanel from "@/components/ControlPanel";
 import ResultPanel from "@/components/ResultPanel";
 import StageOverlay from "@/components/StageOverlay";
+import WhyThisPlan from "@/components/WhyThisPlan";
 import { adapt, crashTest, getMode, loadMeta, onModeChange } from "@/lib/api";
 import {
   ADAPT_STAGES, CRASH_STAGES, headlineFor, prefersReducedMotion, runStages,
@@ -259,7 +260,12 @@ export default function Page() {
         />
 
         <div className="pointer-events-none absolute inset-0 p-4">
-          <div className="pointer-events-auto absolute right-4 top-4">
+          {/* One scrollable right-hand column: the result, then the evidence
+              behind it. Anchoring them separately made them collide once the
+              result panel grew. */}
+          <div className="pointer-events-auto absolute right-4 top-4 flex
+            max-h-[calc(100vh-2rem)] w-[350px] flex-col gap-3 overflow-y-auto
+            pb-1">
             <ResultPanel
               meta={meta}
               sel={sel}
@@ -270,6 +276,10 @@ export default function Page() {
               hotspots={hotspots}
               onPickHour={(h) => patch({ hour: h })}
             />
+            {/* The evidence behind the allocation, once it has landed. */}
+            {adapted && (adaptStage === "land" || adaptStage === "complete") && (
+              <WhyThisPlan meta={meta} sel={sel} adapted={adapted} />
+            )}
           </div>
 
           <div className="absolute bottom-4 left-4">

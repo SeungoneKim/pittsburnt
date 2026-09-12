@@ -263,6 +263,7 @@ def main() -> None:
                         "reduction_pct": round(out["reduction_pct"], 2),
                         "impact_scopes": impact_scopes(e, props, out["before"],
                                                        out["after"]),
+                        "rank_trace": out["rank_trace"],
                         "changed": [[int(i), round(float(after[i]), 2)] for i in moved],
                         # [segment index, kind index, how many] - a big budget
                         # puts many units on the same segment, so counting

@@ -220,6 +220,7 @@ def adapt(req: AdaptRequest) -> dict:
         "after_heat_load": round(after.heat_load_total, 2),
         "reduction_pct": round(out["reduction_pct"], 2),
         "impact_scopes": scope,
+        "rank_trace": out["rank_trace"],
         "placements": out["placements"],
         "changed_segments": changed,
         **_segments_payload(after, 20),

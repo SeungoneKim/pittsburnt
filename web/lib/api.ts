@@ -82,6 +82,7 @@ interface RawAdapt {
   after_heat_load: number;
   reduction_pct: number;
   impact_scopes: ImpactScope[];
+  rank_trace: AdaptResult["rank_trace"];
   changed: [number, number][];
   placements: [number, number, number][];
 }
@@ -190,6 +191,7 @@ export async function adapt(sel: Selection, before: CrashResult): Promise<AdaptR
     before_waiting_severe: number; after_waiting_severe: number;
     before_heat_load: number; after_heat_load: number;
     reduction_pct: number; impact_scopes: ImpactScope[];
+    rank_trace: AdaptResult["rank_trace"];
     segments: { severe_minutes: number; heat_load: number }[];
     placements: { seg_id: string; kind: string }[];
   }>("/adapt", {
@@ -228,6 +230,7 @@ export async function adapt(sel: Selection, before: CrashResult): Promise<AdaptR
       after_heat_load: live.after_heat_load,
       reduction_pct: live.reduction_pct,
       impact_scopes: live.impact_scopes,
+      rank_trace: live.rank_trace,
       metric_values: live.segments.map((s) =>
         useSevere ? s.severe_minutes : s.heat_load),
       placements: [...tally.values()],
@@ -257,6 +260,7 @@ export async function adapt(sel: Selection, before: CrashResult): Promise<AdaptR
     after_waiting_severe: r.after_waiting_severe,
     before_heat_load: r.before_heat_load, after_heat_load: r.after_heat_load,
     reduction_pct: r.reduction_pct, impact_scopes: r.impact_scopes,
+    rank_trace: r.rank_trace,
     metric_values,
     placements: r.placements.map(([si, ki, n]) => ({
       seg_id: meta.seg_ids[si], kind: b.kinds[ki], count: n,
