@@ -97,7 +97,11 @@ def meta() -> dict:
         "personas": [{"key": p["persona"], "label": p["label"],
                       "speed_mps": p["speed_mps"],
                       "planning_weight": p["planning_weight"],
-                      "trips": p["trips"]} for p in engine.trip_meta["personas"]],
+                      "trips": p["trips"],
+                      "derived": bool(p.get("derived")),
+                      "composition": p.get("composition"),
+                      "composition_note": p.get("composition_note")}
+                     for p in engine.trip_meta["personas"]],
         "planning_weight_note": (
             "Planning weight is a city priority for who a heat plan should "
             "protect first. It is not a physiological risk coefficient, and "

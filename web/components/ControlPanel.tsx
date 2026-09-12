@@ -140,16 +140,28 @@ export default function ControlPanel({
           options={meta.personas.map((p) => ({
             key: p.key,
             label: p.label,
-            hint: `${p.speed_mps} m/s · planning weight ${p.planning_weight} · ${p.trips} trips`,
+            hint: `${p.speed_mps.toFixed(2)} m/s · planning priority x${p.planning_weight} · ${p.trips} agents`,
           }))}
           onSelect={(persona) => onChange({ persona })}
         />
         {persona && (
           <p className="mt-1.5 text-[11px] text-slate-500">
-            {persona.speed_mps} m/s · {persona.trips} synthetic trips · planning
-            weight {persona.planning_weight}
+            {persona.speed_mps.toFixed(2)} m/s (planning assumption) ·{" "}
+            {persona.trips}{" "}
+            simulated agents
             {persona.planning_weight !== 1 && (
-              <span className="text-amber-700"> (a city priority, not a risk coefficient)</span>
+              <>
+                {" "}· planning priority ×{persona.planning_weight}
+                <span className="text-amber-700">
+                  {" "}— a city priority, not a risk coefficient
+                </span>
+              </>
+            )}
+            {persona.derived && (
+              <span className="text-slate-600">
+                {" "}· sum of {persona.composition?.length ?? 0} cohorts, equal
+                weight, not calibrated to census demographics
+              </span>
             )}
           </p>
         )}

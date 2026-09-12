@@ -6,6 +6,10 @@ export interface Persona {
   speed_mps: number;
   planning_weight: number;
   trips: number;
+  /** True for "All pedestrians", which is the sum of the other cohorts. */
+  derived?: boolean;
+  composition?: string[];
+  composition_note?: string;
 }
 
 export interface Scenario {

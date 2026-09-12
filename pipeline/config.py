@@ -71,22 +71,21 @@ TIMEZONE = "America/New_York"
 # protect first, not a claim about anyone's medical outcome. Exposure is
 # always reported unweighted alongside the weighted figure.
 #
-# Walking speeds are ordinary planning values in m/s; slower walkers
-# accumulate more exposure simply by being outside longer, which is the
-# mechanism the brief asks for - no invented multipliers.
+# Walking speeds are disclosed planning assumptions in m/s, and this table is
+# their single source of truth. Slower walkers accumulate more exposure simply
+# by being outside longer, which is the mechanism the brief asks for - there
+# are no invented physiological multipliers anywhere in the model.
+# "all" is NOT sampled. It is the aggregation of the four persona cohorts
+# below, so it is arithmetically consistent with them - selecting it shows the
+# whole modelled population, not a fifth independent draw that happens to
+# disagree with the sum of its parts.
+DERIVED_PERSONA = "all"
+DERIVED_PERSONA_LABEL = "All pedestrians"
+
 PERSONAS = {
-    "all": {
-        "label": "All pedestrians",
-        "speed_mps": 1.35,
-        "planning_weight": 1.0,
-        "max_trip_m": 1500,
-        "destinations": ["university", "hospital", "retail", "commercial",
-                         "office", "school", "supermarket"],
-        "departure_mix": {8: 0.25, 12: 0.25, 15: 0.25, 18: 0.25},
-    },
     "students": {
         "label": "Students",
-        "speed_mps": 1.45,
+        "speed_mps": 1.30,
         "planning_weight": 1.0,
         "max_trip_m": 1800,
         "destinations": ["university", "college", "school", "library",
@@ -95,7 +94,7 @@ PERSONAS = {
     },
     "older_adults": {
         "label": "Older adults",
-        "speed_mps": 1.05,
+        "speed_mps": 0.90,
         "planning_weight": 1.4,
         "max_trip_m": 900,
         "destinations": ["retail", "supermarket", "commercial",
@@ -104,7 +103,7 @@ PERSONAS = {
     },
     "workers": {
         "label": "Workers",
-        "speed_mps": 1.40,
+        "speed_mps": 1.20,
         "planning_weight": 1.0,
         "max_trip_m": 2000,
         "destinations": ["hospital", "office", "commercial", "university",

@@ -252,7 +252,11 @@ def main() -> None:
         "personas": [{"key": p["persona"], "label": p["label"],
                       "speed_mps": p["speed_mps"],
                       "planning_weight": p["planning_weight"],
-                      "trips": p["trips"]} for p in e.trip_meta["personas"]],
+                      "trips": p["trips"],
+                      "derived": bool(p.get("derived")),
+                      "composition": p.get("composition"),
+                      "composition_note": p.get("composition_note")}
+                     for p in e.trip_meta["personas"]],
         "scenarios": [{"key": k, "label": v["label"], "delta_c": v["delta_c"],
                        "is_extrapolated": v["is_extrapolated"]}
                       for k, v in e.scenarios["scenarios"].items()],

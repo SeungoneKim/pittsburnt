@@ -9,9 +9,15 @@ Everything is drawn from one frozen seed. That is the whole point: the
 before/after comparison the demo rests on must run the *same* people over
 the *same* geometry, so that the only thing that changed is the intervention.
 
+"All pedestrians" is not sampled. It is the sum of the four cohorts, so it
+is arithmetically consistent with them: selecting it shows the whole modelled
+population rather than a fifth independent draw that would quietly disagree
+with the sum of its parts. Its composition is equal-weight across the four
+persona types and is recorded as such - it is not calibrated to census
+demographics, and the UI says so.
+
 The artifact that matters is minutes.npz - minutes[segment, persona, hour],
 the pedestrian-minutes each persona spends on each segment at each snapshot.
-Multiply by heat, sun exposure and planning weight and you have the score.
 """
 from __future__ import annotations
 
@@ -23,7 +29,8 @@ import networkx as nx
 import numpy as np
 import osmnx as ox
 
-from config import (CACHE, CRS_METRIC, CRS_WGS84, HOURS, HOUR_LABELS, N_TRIPS,
+from config import (CACHE, CRS_METRIC, CRS_WGS84, DERIVED_PERSONA,
+                    DERIVED_PERSONA_LABEL, HOURS, HOUR_LABELS, N_TRIPS,
                     PERSONAS, RESIDENTIAL_BUILDINGS, SEED)
 
 MINUTES_PATH = CACHE / "minutes.npz"
@@ -112,12 +119,13 @@ def main() -> None:
     print(f"  origin pool: {len(origins)} residential buildings")
 
     nodes_xy = None
-    persona_names = list(PERSONAS)
+    sampled = list(PERSONAS)
+    persona_names = sampled + [DERIVED_PERSONA]
     minutes = np.zeros((len(seg), len(persona_names), len(HOURS)), dtype=np.float32)
     routes_out, meta = [], []
     hour_index = {h: i for i, h in enumerate(HOURS)}
 
-    for pi, pname in enumerate(persona_names):
+    for pi, pname in enumerate(sampled):
         persona = PERSONAS[pname]
         dests = cent[cent["building"].isin(persona["destinations"])]
         pairs = build_trip_population(rng, Gp, nodes_xy, origins, dests,
@@ -166,11 +174,36 @@ def main() -> None:
         print(f"  {persona['label']:22} {ok:4} trips  median {np.median(lens):6.0f} m  "
               f"{tot_min:8.0f} pedestrian-minutes")
 
+    # "All pedestrians" is the sum of the cohorts, by construction.
+    all_idx = persona_names.index(DERIVED_PERSONA)
+    minutes[:, all_idx, :] = minutes[:, :all_idx, :].sum(axis=1)
+    total_trips = sum(m["trips"] for m in meta)
+    # Distance-weighted mean speed, for display only; the model always uses
+    # each cohort's own speed.
+    wsum = sum(m["trips"] * m["median_trip_m"] for m in meta) or 1
+    meta.append({
+        "persona": DERIVED_PERSONA, "label": DERIVED_PERSONA_LABEL,
+        "derived": True,
+        "composition": [m["persona"] for m in meta],
+        "composition_note": ("Equal-weight sum of the four persona cohorts. "
+                             "Not calibrated to census demographics."),
+        "trips": total_trips,
+        "median_trip_m": float(np.median([m["median_trip_m"] for m in meta])),
+        "total_minutes": float(minutes[:, all_idx, :].sum()),
+        "speed_mps": round(sum(m["trips"] * m["median_trip_m"] * m["speed_mps"]
+                               for m in meta) / wsum, 3),
+        "planning_weight": 1.0,
+    })
+    print(f"  {DERIVED_PERSONA_LABEL:22} {total_trips:4} trips  "
+          f"(aggregate of {len(sampled)} cohorts)  "
+          f"{minutes[:, all_idx, :].sum():8.0f} pedestrian-minutes")
+
     np.savez_compressed(MINUTES_PATH, minutes=minutes,
                         seg_ids=seg["seg_id"].to_numpy(),
                         personas=np.array(persona_names), hours=np.array(HOURS))
     TRIP_META_PATH.write_text(json.dumps(
-        {"seed": SEED, "n_trips_requested": N_TRIPS, "personas": meta}, indent=2))
+        {"seed": SEED, "n_trips_requested": N_TRIPS,
+         "derived_persona": DERIVED_PERSONA, "personas": meta}, indent=2))
     if routes_out:
         gpd.GeoDataFrame(routes_out, crs=CRS_METRIC).to_crs(CRS_WGS84) \
             .to_file(TRIPS_PATH, driver="GeoJSON")

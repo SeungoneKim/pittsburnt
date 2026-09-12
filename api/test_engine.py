@@ -81,6 +81,13 @@ def main() -> int:
     check("planning weight is reported, not baked in",
           old.planning_weight != 1.0 and allp.planning_weight == 1.0,
           f"older adults x{old.planning_weight}, all x{allp.planning_weight}")
+    # "All" is the population, so it must equal its parts exactly - not merely
+    # exceed them, which a fifth independent sample would also do by luck.
+    cohorts = [p for p in e.personas if p != "all"]
+    parts = sum(e.crash_test("heat2035", 15, c).severe_total for c in cohorts)
+    check("'all' equals the sum of the cohorts",
+          abs(allp.severe_total - parts) < 1e-6,
+          f"{allp.severe_total:.1f} vs {parts:.1f} summed over {len(cohorts)}")
 
     # --- shade ------------------------------------------------------------
     full = np.ones(len(e.seg_ids))

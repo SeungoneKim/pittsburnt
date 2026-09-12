@@ -1,51 +1,60 @@
 {
   "seed": 20260911,
   "n_trips_requested": 300,
+  "derived_persona": "all",
   "personas": [
-    {
-      "persona": "all",
-      "label": "All pedestrians",
-      "trips": 300,
-      "median_trip_m": 1169.0990373894558,
-      "total_minutes": 4473.8701171875,
-      "speed_mps": 1.35,
-      "planning_weight": 1.0
-    },
     {
       "persona": "students",
       "label": "Students",
-      "trips": 300,
-      "median_trip_m": 1288.3862763248817,
-      "total_minutes": 4503.49658203125,
-      "speed_mps": 1.45,
+      "trips": 299,
+      "median_trip_m": 1288.1145453648649,
+      "total_minutes": 4913.083984375,
+      "speed_mps": 1.3,
       "planning_weight": 1.0
     },
     {
       "persona": "older_adults",
       "label": "Older adults",
-      "trips": 296,
-      "median_trip_m": 782.8391561902088,
-      "total_minutes": 3915.512939453125,
-      "speed_mps": 1.05,
+      "trips": 297,
+      "median_trip_m": 839.9407931737574,
+      "total_minutes": 4827.42529296875,
+      "speed_mps": 0.9,
       "planning_weight": 1.4
     },
     {
       "persona": "workers",
       "label": "Workers",
-      "trips": 299,
-      "median_trip_m": 1461.4685252028312,
-      "total_minutes": 5233.06396484375,
-      "speed_mps": 1.4,
+      "trips": 300,
+      "median_trip_m": 1423.82138130205,
+      "total_minutes": 6000.7236328125,
+      "speed_mps": 1.2,
       "planning_weight": 1.0
     },
     {
       "persona": "mobility_constrained",
       "label": "Mobility-constrained",
-      "trips": 298,
-      "median_trip_m": 610.8629559865175,
-      "total_minutes": 4013.27099609375,
+      "trips": 299,
+      "median_trip_m": 627.0114455718817,
+      "total_minutes": 4080.759033203125,
       "speed_mps": 0.8,
       "planning_weight": 1.6
+    },
+    {
+      "persona": "all",
+      "label": "All pedestrians",
+      "derived": true,
+      "composition": [
+        "students",
+        "older_adults",
+        "workers",
+        "mobility_constrained"
+      ],
+      "composition_note": "Equal-weight sum of the four persona cohorts. Not calibrated to census demographics.",
+      "trips": 1195,
+      "median_trip_m": 1064.027669269311,
+      "total_minutes": 19821.9921875,
+      "speed_mps": 1.111,
+      "planning_weight": 1.0
     }
   ]
 }

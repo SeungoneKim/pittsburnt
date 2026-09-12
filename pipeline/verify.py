@@ -225,6 +225,27 @@ def verify_trips() -> None:
           f"mobility {by['mobility_constrained']['median_trip_m']:.0f} m")
     check("trip seed recorded", "seed" in meta, f"seed {meta.get('seed')}")
 
+    # "All pedestrians" must be the sum of the cohorts, not a fifth draw.
+    personas = [str(p) for p in z["personas"]]
+    derived = meta.get("derived_persona")
+    if derived in personas:
+        di = personas.index(derived)
+        others = [i for i in range(len(personas)) if i != di]
+        diff = float(np.abs(mins[:, di, :] - mins[:, others, :].sum(axis=1)).max())
+        check("'all' is the aggregation of the cohorts", diff < 1e-3,
+              f"max per-segment difference {diff:.2e} min")
+        check("'all' carries no planning weight",
+              next(p["planning_weight"] for p in meta["personas"]
+                   if p["persona"] == derived) == 1.0)
+
+    # Walking speeds are the spec's single source of truth.
+    expected = {"students": 1.30, "workers": 1.20,
+                "older_adults": 0.90, "mobility_constrained": 0.80}
+    got = {p["persona"]: p["speed_mps"] for p in meta["personas"]}
+    bad = {k: got.get(k) for k, v in expected.items() if abs(got.get(k, -1) - v) > 1e-9}
+    check("persona speeds match the specified values", not bad,
+          bad or " / ".join(f"{k} {v}" for k, v in expected.items()))
+
 
 def verify_scenarios() -> None:
     path = CACHE / "scenarios.json"
